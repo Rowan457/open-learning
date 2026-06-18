@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# Output
+output/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SQLite (runtime generated)
+*.db
+*.db-journal
+*.db-wal
+
+# Node (if needed for frontend)
+node_modules/
