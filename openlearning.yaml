@@ -1,0 +1,109 @@
+# OpenLearning — 用户配置
+version: "1.0"
+
+# LLM 配置 — 小米 MiMo
+llm:
+  provider: mimo
+  api_key: ${MIMO_API_KEY}
+  base_url: ${MIMO_BASE_URL}
+
+  # 模型分层
+  models:
+    pro: "mimo-v2.5-pro"
+    standard: "mimo-v2.5"
+    lite: "mimo-7b"
+
+  # 任务→模型映射
+  routing:
+    supervisor: pro
+    planner: pro
+    collector: lite
+    analyzer_extract: standard
+    analyzer_tag: lite
+    analyzer_summarize: lite
+    evaluator: lite
+    tool_router: standard
+    reflector: pro
+    builder: lite
+
+  max_tokens: 4096
+  temperature: 0.3
+  cache: true
+  retry_max: 3
+
+  # 成本估算 (每 1M tokens)
+  cost:
+    mimo-v2.5-pro: 15.0
+    mimo-v2.5: 5.0
+    mimo-7b: 0.5
+
+# Skill 配置
+skills:
+  search:
+    module: openlearning.skills.search
+    enabled: true
+    providers:
+      google:
+        api_key: ${GOOGLE_API_KEY}
+        daily_limit: 100
+      arxiv: {}
+      youtube:
+        api_key: ${YOUTUBE_API_KEY}
+      github:
+        token: ${GITHUB_TOKEN}
+  fetch:
+    module: openlearning.skills.fetch
+    enabled: true
+    timeout: 30
+    respect_robots: true
+  analyze:
+    module: openlearning.skills.analyze
+    enabled: true
+  persist:
+    module: openlearning.skills.persist
+    enabled: true
+  render:
+    module: openlearning.skills.render
+    enabled: true
+  memory:
+    module: openlearning.skills.memory
+    enabled: true
+  git:
+    module: openlearning.skills.git
+    enabled: true
+
+# 站点生成
+site:
+  theme: default
+  language: zh-CN
+  base_url: "/"
+  favicon: null
+  analytics: null
+
+# 更新策略
+updates:
+  check_interval: weekly
+  notify: true
+  auto_regenerate: true
+
+# LangSmith 可观测性
+langsmith:
+  enabled: true
+  api_key: ${LANGSMITH_API_KEY}
+  project: "openlearning"
+  tracing:
+    level: "all"
+    capture_inputs: true
+    capture_outputs: true
+  evaluation:
+    auto_evaluate: false
+    sample_rate: 0.1
+  alerts:
+    daily_cost_limit: 10.0
+    warn_at: 8.0
+
+# 数据库
+db_path: "data/openlearning.db"
+
+# 输出
+output_dir: "output"

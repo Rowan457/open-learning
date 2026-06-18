@@ -1,0 +1,166 @@
+"""Evaluation Engine — rule-based quality/coverage/diversity checks.
+
+No LLM cost — pure rule engine.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from openlearning.agents.state import AgentState
+
+
+async def evaluator_engine(state: AgentState) -> dict[str, Any]:
+    """Evaluation Engine: rule-driven quality/coverage/diversity/freshness checks.
+
+    Reads: analyzed_resources, knowledge_graph, iteration
+    Writes: evaluation, iteration
+    """
+    resources = state.get("analyzed_resources", [])
+    graph = state.get("knowledge_graph", {})
+    iteration = state.get("iteration", 0)
+    max_iterations = state.get("max_iterations", 3)
+
+    # 1. Quality check
+    quality = _check_quality(resources, min_avg=6.0, min_single=3.0)
+
+    # 2. Coverage check
+    coverage = _check_coverage(graph, resources)
+
+    # 3. Diversity check
+    diversity = _check_diversity(resources, min_types=3)
+
+    # 4. Freshness check
+    freshness = _check_freshness(resources, min_recent_ratio=0.3)
+
+    # 5. Overall judgment
+    all_passed = all([quality["pass"], coverage["pass"], diversity["pass"], freshness["pass"]])
+    forced_pass = iteration >= max_iterations
+
+    return {
+        "evaluation": {
+            "pass": all_passed or forced_pass,
+            "quality": quality,
+            "coverage": coverage,
+            "diversity": diversity,
+            "freshness": freshness,
+            "forced_pass": forced_pass,
+        },
+        "iteration": iteration + 1,
+        "current_agent": "evaluator",
+    }
+
+
+def _check_quality(resources: list[dict], min_avg: float = 6.0, min_single: float = 3.0) -> dict:
+    """Check quality scores meet thresholds."""
+    if not resources:
+        return {"pass": False, "reason": "No resources", "avg": 0.0, "low_count": 0}
+
+    scores = [r.get("quality_score", 0) for r in resources]
+    avg = sum(scores) / len(scores) if scores else 0.0
+    low_count = sum(1 for s in scores if s < min_single)
+
+    passed = avg >= min_avg and low_count == 0
+
+    return {
+        "pass": passed,
+        "avg": round(avg, 2),
+        "low_count": low_count,
+        "reason": f"Avg={avg:.1f} (need ≥{min_avg}), {low_count} below {min_single}",
+    }
+
+
+def _check_coverage(graph: dict, resources: list[dict]) -> dict:
+    """Check knowledge graph nodes have resource coverage."""
+    nodes = graph.get("nodes", [])
+    if not nodes:
+        return {"pass": True, "reason": "No knowledge graph", "covered": 0, "total": 0}
+
+    # Build resource → concept mapping (simple keyword match)
+    resource_texts = []
+    for r in resources:
+        text = (r.get("title", "") + " " + r.get("snippet", "")).lower()
+        resource_texts.append(text)
+
+    covered = 0
+    uncovered = []
+    for node in nodes:
+        node_name = node.get("name", "").lower()
+        node_id = node.get("id", "").lower().replace("_", " ")
+
+        # Check if any resource mentions this concept
+        is_covered = any(
+            node_name in text or node_id in text
+            for text in resource_texts
+        )
+
+        if is_covered:
+            covered += 1
+        else:
+            uncovered.append(node.get("name", node.get("id", "")))
+
+    total = len(nodes)
+    ratio = covered / total if total > 0 else 0.0
+    passed = ratio >= 0.6  # 60% coverage threshold
+
+    return {
+        "pass": passed,
+        "covered": covered,
+        "total": total,
+        "ratio": round(ratio, 2),
+        "uncovered": uncovered[:10],
+        "reason": f"{covered}/{total} nodes covered ({ratio:.0%}), need ≥60%",
+    }
+
+
+def _check_diversity(resources: list[dict], min_types: int = 3) -> dict:
+    """Check resource type diversity."""
+    if not resources:
+        return {"pass": False, "reason": "No resources", "types": [], "count": 0}
+
+    types = set()
+    for r in resources:
+        # Infer type from source or resource_type
+        rtype = r.get("resource_type", r.get("source", "article"))
+        types.add(rtype)
+
+    passed = len(types) >= min_types
+
+    return {
+        "pass": passed,
+        "types": list(types),
+        "count": len(types),
+        "reason": f"{len(types)} types ({', '.join(types)}), need ≥{min_types}",
+    }
+
+
+def _check_freshness(resources: list[dict], min_recent_ratio: float = 0.3) -> dict:
+    """Check that enough resources are recent (within 1 year)."""
+    if not resources:
+        return {"pass": False, "reason": "No resources", "recent_ratio": 0.0}
+
+    from datetime import datetime, timedelta
+
+    one_year_ago = datetime.utcnow() - timedelta(days=365)
+    recent_count = 0
+
+    for r in resources:
+        published = r.get("published", "")
+        if published:
+            try:
+                pub_date = datetime.strptime(published[:10], "%Y-%m-%d")
+                if pub_date > one_year_ago:
+                    recent_count += 1
+            except (ValueError, TypeError):
+                pass
+
+    ratio = recent_count / len(resources) if resources else 0.0
+    passed = ratio >= min_recent_ratio
+
+    return {
+        "pass": passed,
+        "recent_count": recent_count,
+        "total": len(resources),
+        "ratio": round(ratio, 2),
+        "reason": f"{recent_count}/{len(resources)} recent ({ratio:.0%}), need ≥{min_recent_ratio:.0%}",
+    }
