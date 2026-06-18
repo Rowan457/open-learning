@@ -86,12 +86,6 @@
                       │ LangSmith│
                       │ (可观测) │
                       └──────────┘
-              │
-              ▼
-        ┌──────────┐
-        │ LangSmith│
-        │ (可观测) │
-        └──────────┘
 ```
 
 ### 3.2 核心设计模式
@@ -146,7 +140,7 @@ START
 
 > 基于 LangGraph StateGraph 的五个 Sub-Agent，每个是独立子图，由 Supervisor 编排。
 
-## 4.A 功能 Agent
+### 4.A 功能 Agent
 
 > 直接面向用户的核心功能——输入学习需求，输出结构化资源和课程网站。
 
@@ -592,9 +586,11 @@ output/
 | SEO | 语义化 HTML + meta 标签 |
 | 部署 | 支持 Vercel / Netlify / GitHub Pages 一键部署 |
 
-## 5. Agent 基础设施
+## 5. Agent 基础设施 (`4.B`)
 
 > 运行时支撑层——不直接面向用户，但决定了 Agent 的效率、质量和可维护性。
+
+### 5.1 上下文压缩 (Context Compression)
 
 ### 5.1 上下文压缩 (Context Compression)
 
@@ -603,84 +599,33 @@ output/
 #### 压缩策略分层
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    上下文生命周期                         │
-│                                                         │
-│  原始上下文                                              │
-│  ┌─────────────────────────────────────────────┐        │
-│  │ 对话历史 + 工具调用结果 + 代码片段            │        │
-│  └──────────────────┬──────────────────────────┘        │
-│                     │ 达到阈值 (如 80% max_tokens)       │
-│                     ▼                                    │
-│  ┌─────────────────────────────────────────────┐        │
-│  │ 第一层压缩：滑动窗口                          │        │
-│  │ 保留最近 N 轮完整对话，早期对话降级为摘要      │        │
-│  └──────────────────┬──────────────────────────┘        │
-│                     │ 继续增长                            │
-│                     ▼                                    │
-│  ┌─────────────────────────────────────────────┐        │
-│  │ 第二层压缩：渐进式摘要                        │        │
-│  │ 工具调用结果 → 仅保留结论，丢弃原始输出        │        │
-│  │ 代码片段 → 仅保留关键函数签名和决策点          │        │
-│  └──────────────────┬──────────────────────────┘        │
-│                     │ 继续增长                            │
-│                     ▼                                    │
-│  ┌─────────────────────────────────────────────┐        │
-│  │ 第三层压缩：关键信息提取                      │        │
-│  │ 整段历史 → 结构化的「决策日志」               │        │
-│  │ 仅保留：做了什么决定、为什么、结果如何         │        │
-│  └──────────────────┬──────────────────────────┘        │
-│                     │                                    │
-│                     ▼                                    │
-│               Phase 边界 (Git Checkpoint)                │
-│               完全清除，从 git log 恢复                   │
-└─────────────────────────────────────────────────────────┘
+原始上下文 (对话 + 工具结果 + 代码)
+    │ 70% max_tokens
+    ▼
+L1 滑动窗口: 最近 5 轮完整，早期降级为摘要
+    │ 85%
+    ▼
+L2 渐进式摘要: 工具结果→仅结论，代码→仅签名
+    │ 95%
+    ▼
+L3 决策日志: 整段历史→结构化「做了什么/为什么/结果」
+    │ Phase 边界
+    ▼
+完全清除 → 从 git log 恢复
 ```
 
-#### 各层压缩详细规则
+#### 各层压缩规则
 
-**第一层：滑动窗口**
-
-| 内容类型 | 保留策略 |
-|----------|----------|
-| 最近 5 轮对话 | 完整保留 |
-| 更早的对话 | 替换为一句话摘要 |
-| 系统提示 | 始终保留 |
-| 当前任务上下文 | 始终保留 |
-
-**第二层：工具输出压缩**
-
-| 工具类型 | 压缩方式 |
-|----------|----------|
-| 搜索结果 | 保留 top-5 相关结果的标题+URL+一句话摘要，丢弃其余 |
-| 网页抓取 | 保留 LLM 提取的关键段落，丢弃原始 HTML/全文 |
-| 代码文件 | 保留函数签名、类定义、import、关键注释，丢弃函数体 |
-| LLM 分析结果 | 保留结论和评分，丢弃推理过程 |
-| 错误日志 | 保留最后 N 行 + 错误类型，丢弃完整栈 |
-
-**第三层：决策日志**
-
-当上下文极度紧张时，将整个历史压缩为结构化决策日志：
-
-```markdown
-## 本轮工作决策日志
-
-### 已完成
-- [采集] Google 搜索 "Rust async" → 获得 20 个结果，保留 12 个
-- [分析] 评估 12 个资源质量 → 平均分 7.2，淘汰 3 个低于 5 分的
-- [决策] 将 Tokio 官方文档标记为必读（评分 9.5）
-
-### 当前状态
-- 已处理资源：9/48
-- 待处理队列：arXiv(15) + YouTube(12) + GitHub(12)
-
-### 关键发现
-- Rust 异步生态以 Tokio 为主流，async-std 已不活跃
-- 中文资源质量普遍低于英文，但 Bilibili 有几个优质系列
-
-### 下一步
-- 继续处理 arXiv 论文采集
-```
+| 层级 | 内容类型 | 保留策略 |
+|------|----------|----------|
+| **L1** | 最近 5 轮对话 | 完整保留 |
+| | 更早对话 | 一句话摘要 |
+| | 系统提示 / 当前任务 | 始终保留 |
+| **L2** | 搜索结果 | top-5 标题+URL+摘要，丢弃其余 |
+| | 网页抓取 | LLM 关键段落，丢弃原文 |
+| | 代码文件 | 函数签名+类定义，丢弃函数体 |
+| | LLM 分析 | 结论+评分，丢弃推理过程 |
+| **L3** | 全部历史 | 结构化决策日志（已完成/当前状态/关键发现/下一步） |
 
 #### 压缩触发机制
 
@@ -726,46 +671,17 @@ class ContextManager:
 
 #### Skill 架构
 
+Agent 通过 `bind_tools()` 绑定 Skill，Skill 通过 LangChain `@tool` 装饰器定义。详见 §3.1 架构图。
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    LangGraph Agent 运行时                    │
-│                                                             │
-│  ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
-│  │ Planner │ │ Collector│ │ Analyzer │ │ Builder  │       │
-│  │ Agent   │ │ Agent    │ │ Agent    │ │ Agent    │       │
-│  └────┬────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘       │
-│       │           │            │            │              │
-│       └───────────┴────────────┴────────────┘              │
-│                           │                                 │
-│                    ┌──────┴──────┐                          │
-│                    │ Skill 注册表 │  ← 统一工具调用接口       │
-│                    │ (LangChain) │     tool.invoke(params)  │
-│                    └──────┬──────┘                          │
-└───────────────────────────┼─────────────────────────────────┘
-                            │
-          ┌─────────────────┼─────────────────┐
-          ▼                 ▼                 ▼
-  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-  │ search       │ │ fetch        │ │ analyze      │
-  │ Skill        │ │ Skill        │ │ Skill        │
-  │              │ │              │ │              │
-  │ Tools:       │ │ Tools:       │ │ Tools:       │
-  │ • web_search │ │ • fetch_page │ │ • score      │
-  │ • arxiv      │ │ • extract    │ │ • summarize  │
-  │ • youtube    │ │ • parse_pdf  │ │ • tag        │
-  │ • github     │ │              │ │ • compare    │
-  └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
-         │                │                │
-         ▼                ▼                ▼
-  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-  │ persist      │ │ render       │ │ git          │
-  │ Skill        │ │ Skill        │ │ Skill        │
-  │              │ │              │ │              │
-  │ Tools:       │ │ Tools:       │ │ Tools:       │
-  │ • save       │ │ • build_site │ │ • checkpoint │
-  │ • query      │ │ • preview    │ │ • log        │
-  │ • export     │ │ • deploy     │ │ • diff       │
-  └──────────────┘ └──────────────┘ └──────────────┘
+Agent (bind_tools)
+    │
+    ├── search Skill   → web_search / arxiv_search / youtube_search / github_search
+    ├── fetch Skill    → fetch_page / extract / parse_pdf
+    ├── analyze Skill  → score / summarize / tag / compare
+    ├── persist Skill  → save_resource / query_db / export
+    ├── render Skill   → build_site / preview / deploy
+    └── git Skill      → checkpoint / log / diff
 ```
 
 #### Skill 清单
@@ -812,79 +728,27 @@ async def web_search(query: str, max_results: int = 20) -> list[dict]:
     results = await google_search(query, max_results)
     return [{"url": r.url, "title": r.title, "snippet": r.snippet} for r in results]
 
-@tool("arxiv_search", args_schema=SearchInput)
-async def arxiv_search(query: str, max_results: int = 10) -> list[dict]:
-    """从 arXiv 搜索学术论文"""
-    results = await arxiv_api_search(query, max_results)
-    return [{"url": r.url, "title": r.title, "abstract": r.abstract[:200]} for r in results]
-
-# 注册到 Skill 列表
+# 每个模块导出 Tool 列表
 SEARCH_SKILLS = [web_search, arxiv_search, youtube_search, github_search]
 ```
 
 #### Agent 绑定 Skill
 
-LangGraph Agent 通过 `bind_tools()` 绑定 Skill：
+LangGraph Agent 通过 `bind_tools()` 绑定 Skill，详见 §4.0 Supervisor 代码。
 
-```python
-from openlearning.skills.search import SEARCH_SKILLS
-from openlearning.skills.fetch import FETCH_SKILLS
-from openlearning.skills.analyze import ANALYZE_SKILLS
-from openlearning.skills.persist import PERSIST_SKILLS
-from openlearning.skills.render import RENDER_SKILLS
-from openlearning.skills.git import GIT_SKILLS
-
-# 汇总所有 Skill
-all_tools = SEARCH_SKILLS + FETCH_SKILLS + ANALYZE_SKILLS + PERSIST_SKILLS + RENDER_SKILLS + GIT_SKILLS
-
-# Agent 绑定
-agent = create_react_agent(model, tools=all_tools)
-
-# 运行
-result = await agent.ainvoke({"messages": [HumanMessage("帮我收集 Rust 学习资料")]})
-```
-
-#### Skill 注册与发现
+#### Skill 注册表
 
 ```yaml
-# skills.yaml — Skill 注册表
+# skills.yaml
 skills:
-  search:
-    module: openlearning.skills.search
-    tools: [web_search, arxiv_search, youtube_search, github_search]
-    description: 多源搜索聚合
-
-  fetch:
-    module: openlearning.skills.fetch
-    tools: [fetch_page, extract, parse_pdf]
-    description: 内容抓取与提取
-
-  analyze:
-    module: openlearning.skills.analyze
-    tools: [score, summarize, tag, compare]
-    description: 内容分析与评估
-    requires: [fetch]  # 依赖 fetch 的输出
-
-  persist:
-    module: openlearning.skills.persist
-    tools: [save_resource, query_db, export]
-    description: 数据持久化
-
-  render:
-    module: openlearning.skills.render
-    tools: [build_site, preview, deploy]
-    description: 站点生成与部署
-
-  git:
-    module: openlearning.skills.git
-    tools: [checkpoint, log, diff]
-    description: Git 版本管理
-
-  # 用户可注册自定义 Skill
-  custom:
-    module: ./skills/my_custom.py
-    tools: [my_tool]
-    description: 自定义采集器
+  search:  { module: openlearning.skills.search,  tools: [web_search, arxiv_search, youtube_search, github_search] }
+  fetch:   { module: openlearning.skills.fetch,   tools: [fetch_page, extract, parse_pdf] }
+  analyze: { module: openlearning.skills.analyze,  tools: [score, summarize, tag, compare], requires: [fetch] }
+  persist: { module: openlearning.skills.persist,  tools: [save_resource, query_db, export] }
+  render:  { module: openlearning.skills.render,   tools: [build_site, preview, deploy] }
+  git:     { module: openlearning.skills.git,      tools: [checkpoint, log, diff] }
+  # 用户自定义
+  custom:  { module: ./skills/my_custom.py,        tools: [my_tool] }
 ```
 
 ### 5.3 可观测性 (LangSmith 集成)
@@ -920,140 +784,43 @@ Agent 运行时
 | **上下文压缩** | 压缩前后的 token 数、压缩层级、信息丢失率 | 压缩策略调优 |
 | **质量评分** | 每个资源的评分过程、各维度分数、LLM 评分理由 | 评分一致性验证 |
 
-#### LangSmith 面板视图
+#### LangSmith 面板关键指标
 
-```
-┌─────────────────────────────────────────────────────────┐
-│  LangSmith Dashboard — OpenLearning                     │
-├─────────────────────────────────────────────────────────┤
-│                                                         │
-│  📊 本周概览                                             │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │
-│  │ 总调用    │ │ 总 Token │ │ 总成本    │ │ 平均延迟  │  │
-│  │ 1,247    │ │ 892K     │ │ $4.23    │ │ 2.1s     │  │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘  │
-│                                                         │
-│  🔍 最近 Traces                                         │
-│  ├─ [plan] "机器学习入门" → 生成 5 个子主题 (8.2s)       │
-│  ├─ [search] "ML fundamentals" → 20 结果 (3.1s)        │
-│  ├─ [fetch] https://... → 提取 2.4KB 内容 (1.8s)       │
-│  ├─ [analyze] 评分 8.5/10 → "深度足够，示例丰富" (4.2s)  │
-│  └─ [compress] L2 触发 → 128K→78K tokens (0.3s)        │
-│                                                         │
-│  📈 成本趋势                                            │
-│  ┌─────────────────────────────────────────────┐       │
-│  │  $6 ┤                                        │       │
-│  │  $5 ┤           ╭──╮                        │       │
-│  │  $4 ┤      ╭───╯  ╰───╮                    │       │
-│  │  $3 ┤  ╭──╯           ╰──╮                 │       │
-│  │  $2 ┤─╯                  ╰───              │       │
-│  │  $1 ┤                                      │       │
-│  │  $0 ┼───┬───┬───┬───┬───┬───┬───┬───┬──   │       │
-│  │      Mon Tue Wed Thu Fri Sat Sun           │       │
-│  └─────────────────────────────────────────────┘       │
-│                                                         │
-│  🧪 评估结果                                            │
-│  ├─ 质量评分一致性: 92% (vs 人工标注)                     │
-│  ├─ 摘要质量: 4.2/5 (人工抽样)                           │
-│  └─ 主题分类准确率: 88%                                  │
-│                                                         │
-└─────────────────────────────────────────────────────────┘
-```
+| 指标 | 说明 |
+|------|------|
+| **总调用 / Token / 成本** | 本周概览，监控用量趋势 |
+| **Traces** | 每次 Agent/Skill/LLM 调用的完整链路 |
+| **成本趋势** | 日/周/月维度，支持告警阈值 |
+| **评估结果** | 评分一致性、摘要质量、分类准确率 |
 
 #### 使用场景
 
-**场景 1：调试异常评分**
-
-```
-用户: "这个资源评分怎么才 3 分？看起来挺好的"
-
-Agent 操作:
-1. 在 LangSmith 中搜索该资源 URL
-2. 找到对应的 analyze trace
-3. 查看 LLM 的完整评分推理过程:
-   - 内容深度: 8/10 ✓
-   - 时效性: 2/10 ← 问题在这，文章是 2019 年的
-   - 最终加权分: 3.2
-4. 判断：时效性权重过高，调整评分策略
-```
-
-**场景 2：成本优化**
-
-```
-Agent 自检:
-- 发现 fetch Skill 对 40% 的 URL 抓取失败（反爬）
-- 这些失败调用浪费了 ~$0.50 的 token
-- 优化：增加 URL 预检，跳过已知反爬站点
-- LangSmith 对比：优化前后成本下降 18%
-```
-
-**场景 3：评估数据集构建**
-
-```python
-# 从 LangSmith traces 中提取高质量样本，构建评估数据集
-evaluation_dataset = langsmith.create_dataset("resource-quality-eval")
-
-# 选取人工确认过的评分案例
-for trace in langsmith.list_traces("analyze", min_score=0.9):
-    evaluation_dataset.add_example(
-        input=trace.input["content"],
-        expected_output=trace.output["quality_score"]
-    )
-
-# 用于回归测试：每次 prompt 修改后自动评估
-```
+| 场景 | 操作 | 价值 |
+|------|------|------|
+| **调试异常评分** | 搜索资源 URL → 查看 analyze trace → 定位低分维度 | 快速定位评分偏差原因 |
+| **成本优化** | 分析失败调用 → 识别反爬浪费 → 优化预检策略 | 降低无效 token 消耗 |
+| **评估数据集** | 从 traces 提取高分样本 → 构建回归测试集 | prompt 修改后自动验证质量 |
 
 #### 配置
 
 ```yaml
-# openlearning.yaml 新增段
+# openlearning.yaml
 langsmith:
   enabled: true
   api_key: ${LANGSMITH_API_KEY}
-  project: "openlearning"           # LangSmith 项目名
-  endpoint: "https://api.smith.langchain.com"
-
-  # 追踪级别
+  project: "openlearning"
   tracing:
     level: "all"                    # all / llm_only / off
-    capture_inputs: true            # 记录输入
-    capture_outputs: true           # 记录输出
-    capture_metadata: true          # 记录 token/延迟/成本
-
-  # 评估
   evaluation:
-    auto_evaluate: false            # 是否自动评估 LLM 输出
-    sample_rate: 0.1                # 抽样率 (10% 的调用做评估)
-    dataset: "resource-quality-eval" # 评估数据集名
-
-  # 成本告警
+    auto_evaluate: false
+    sample_rate: 0.1
   alerts:
-    daily_cost_limit: 10.0          # 日成本上限 ($)
-    warn_at: 8.0                    # 告警阈值 ($)
+    daily_cost_limit: 10.0
 ```
 
-#### 与 Skill 系统的集成
+#### 集成方式
 
-LangGraph Agent 调用 Skill Tool 时，LangSmith 自动追踪每次调用：
-
-```python
-# Skill Tool 调用被 LangSmith 自动捕获
-# LangSmith 记录:
-# - Tool 名称: "web_search"
-# - Skill 模块: "search"
-# - Input: {"query": "Rust async", "max_results": 20}
-# - Output: [资源列表...]
-# - Latency: 1.2s
-# - Tokens: 关联的 LLM 调用 token 汇总
-
-# Agent 级别追踪（LangGraph 自动集成 LangSmith）
-from langsmith import traceable
-
-@traceable(name="openlearning-agent", tags=["agent"])
-async def run_agent(user_request: str):
-    result = await app.ainvoke({"user_request": user_request})
-    return result
-```
+LangGraph + LangSmith 自动集成，Skill Tool 调用和 LLM 调用均自动上报，无需手动 `@traceable`。Agent 级别追踪通过 `@traceable(name="openlearning-agent")` 装饰入口函数即可。
 
 #### 数据保留策略
 
@@ -1066,7 +833,7 @@ async def run_agent(user_request: str):
 
 ---
 
-## 6. 开发工作流
+## 6. 开发工作流 (`4.C`)
 
 > Agent 自身的开发节奏控制——如何分阶段推进、如何管理上下文生命周期。
 
@@ -1079,44 +846,16 @@ async def run_agent(user_request: str):
 #### 工作流程
 
 ```
-Phase 1 开始
+git log -1 → 解析 phase(N) → 执行 Phase N+1
     │
     ▼
-┌───────────────────────────┐
-│ 1. 读取 git log           │  ← 检查最后一条 commit message
-│    解析当前进度            │     确定应执行哪个 Phase
-└─────────────┬─────────────┘
-              │
-              ▼
-┌───────────────────────────┐
-│ 2. 执行当前 Phase         │
-│    编码 / 测试 / 文档      │
-└─────────────┬─────────────┘
-              │
-              ▼
-┌───────────────────────────┐
-│ 3. Phase 完成检查点        │
-│    a. git add -A           │
-│    b. git commit           │  ← commit message 包含 Phase 标记
-│    c. 输出完成摘要         │
-│    d. 清除上下文           │  ← 上下文窗口重置
-└─────────────┬─────────────┘
-              │
-              ▼
-         [ 上下文已清除 ]
-              │
-              ▼
-┌───────────────────────────┐
-│ 4. 新上下文启动            │
-│    a. git log -1           │  ← 读取最后一条 commit
-│    b. 解析 Phase 标记      │     "phase(2): 智能分析 ✓"
-│    c. 确定下一个 Phase     │     → 执行 Phase 3
-│    d. 读取相关代码上下文    │     仅加载必要文件
-└─────────────┬─────────────┘
-              │
-              ▼
-         Phase 2 开始执行
-         ...
+编码 / 测试 / 文档
+    │
+    ▼
+git add -A → git commit "phase(N+1): title ✓" → 清除上下文
+    │
+    ▼
+新上下文 → git log -1 → 解析 phase(N+1) → 执行 Phase N+2
 ```
 
 #### Commit Message 规范
@@ -1144,18 +883,12 @@ phase(1): MVP 核心采集 + 生成 ✓
 新增 12 个文件，约 2000 行代码
 
 completed:
-- [x] CLI 框架 (Typer)
-- [x] SQLite 数据模型
-- [x] Planner Agent
+- [x] CLI / SQLite / Planner Agent
 - [x] Google / arXiv / GitHub 采集器
-- [x] 基础内容提取 & 评分
-- [x] 静态站点生成
-- [x] 本地预览服务器
+- [x] 内容提取 & 评分 & 站点生成
 
 next:
-- [ ] LLM 深度内容分析
-- [ ] 多维度质量评分引擎
-- [ ] 智能摘要生成
+- [ ] LLM 深度分析 / 多维评分 / 智能摘要
 ```
 
 #### Phase 状态恢复逻辑
@@ -1191,10 +924,10 @@ def determine_phase(git_log: str) -> int:
 
 #### 安全保障
 
-- **未提交的变更检测**：Phase 切换前检查 `git status`，有未提交变更则提醒
-- **commit message 校验**：必须包含 `phase(N):` 标记，否则拒绝提交
-- **回滚能力**：如果新 Phase 发现上一个 Phase 有 bug，可 `git revert` 后修复再继续
-- **进度可视化**：每次启动显示 Phase 进度条 `[■■■□□] Phase 3/5`
+- Phase 切换前检查 `git status`，有未提交变更则提醒
+- commit message 必须包含 `phase(N):` 标记
+- 支持 `git revert` 回滚到任意 Phase
+- 每次启动显示进度条 `[■■■□□] Phase 3/5`
 
 ---
 
@@ -1608,31 +1341,7 @@ open_learning/
 │       │   ├── cost.py       # 成本追踪 & 告警
 │       │   └── dashboard.py  # 本地面板数据聚合
 │       │
-│       ├── collectors/       # 资源采集器
-│       │   ├── __init__.py
-│       │   ├── base.py       # 采集器基类
-│       │   ├── google.py     # Google 搜索
-│       │   ├── arxiv.py      # arXiv 论文
-│       │   ├── youtube.py    # YouTube 视频
-│       │   ├── github.py     # GitHub 仓库
-│       │   ├── bilibili.py   # Bilibili 视频
-│       │   ├── rss.py        # RSS/Atom 订阅
-│       │   └── web.py        # 通用网页抓取
-│       │
-│       ├── pipeline/         # 处理流水线
-│       │   ├── __init__.py
-│       │   ├── dedup.py      # 去重逻辑
-│       │   ├── scorer.py     # 质量评分引擎
-│       │   ├── ranker.py     # 排序 & 推荐
-│       │   └── updater.py    # 变更检测 & 更新
-│       │
-│       ├── builder/          # 站点生成
-│       │   ├── __init__.py
-│       │   ├── generator.py  # 主生成逻辑
-│       │   ├── sitemap.py    # 站点地图生成
-│       │   └── deployer.py   # 部署工具
-│       │
-│       └── templates/        # Jinja2 模板
+│       ├── templates/        # Jinja2 模板 (Builder Skill 使用)
 │           ├── base.html
 │           ├── index.html
 │           ├── learning_path.html
