@@ -57,5 +57,26 @@ Format: `phase(<N>): <title> ✓`
 
 ---
 
+---
+
+## phase(0.2): 架构升级 ✓
+
+**日期**: 2026-06-18
+
+### 6 项重大改动
+
+1. **Supervisor → LLM 决策者** — 状态机查表改为 LLM 推理决策
+2. **新增 Tool Router** — LLM 选择最佳工具组合，避免硬编码
+3. **Analyzer → 知识提取** — 从评分摘要升级为概念提取+关系发现
+4. **新增 Memory Agent** — 学习用户偏好、历史项目、去重推荐
+5. **新增 Evaluation Engine** — 规则引擎做质量/覆盖检查，零 token 成本
+6. **Builder → 学习系统** — 从资源列表升级为知识图谱学习系统
+
+### 新 Agent 列表
+- Supervisor (LLM) / Memory / Planner / Collector / Analyzer
+- Evaluation Engine (规则) / Tool Router / Reflector / Builder
+
+---
+
 next:
 - [ ] Phase 1: MVP 核心采集 + 生成
