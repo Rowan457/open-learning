@@ -101,5 +101,29 @@ Format: `phase(<N>): <title> ✓`
 
 ---
 
+---
+
+## phase(0.4): Learning Memory 系统 ✓
+
+**日期**: 2026-06-18
+
+### 三层记忆架构
+1. **项目记忆** — 历史项目、已推荐 URL、相似项目检测
+2. **偏好记忆** — 资源类型/语言/难度/学习风格
+3. **学习记忆** ★ — 概念掌握度、学习轨迹、间隔重复、知识缺口
+
+### 新增数据表
+- concepts / concept_relations / concept_mastery / learning_events / resource_interactions
+
+### 新增模块
+- memory/ (mastery.py / tracker.py / spaced.py / gaps.py / preferences.py)
+- memory Skill (get_mastery / update_mastery / get_preferences / record_event)
+
+### Builder 路径生成升级
+- 跳过已掌握 (mastery >= 0.8)
+- 优先继续学习中 / 定向补充缺口 / 插入间隔重复复习
+
+---
+
 next:
 - [ ] Phase 1: MVP 核心采集 + 生成
