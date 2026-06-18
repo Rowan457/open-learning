@@ -47,15 +47,15 @@
 │                    │  状态驱动 · 条件路由  │                         │
 │                    └──────────┬──────────┘                          │
 │                               │                                     │
-│         ┌─────────┬───────────┼───────────┬─────────┐              │
-│         ▼         ▼           ▼           ▼         ▼              │
-│  ┌──────────┐┌──────────┐┌──────────┐┌──────────┐┌──────────┐     │
-│  │ Planner  ││Collector ││ Analyzer ││ Reflector││ Builder  │     │
-│  │  Agent   ││  Agent   ││  Agent   ││  Agent   ││  Agent   │     │
-│  │          ││          ││          ││          ││          │     │
-│  │ 子图:    ││ 子图:    ││ 子图:    ││ 子图:    ││ 子图:    │     │
-│  │ 规划→展开││ 搜索→抓取││ 评分→摘要││ 审查→补缺││ 渲染→部署│     │
-│  └──────────┘└──────────┘└──────────┘└──────────┘└──────────┘     │
+│  ┌─────────┬─────────┬────────┼────────┬──────────┬──────────┐     │
+│  ▼         ▼         ▼        ▼        ▼          ▼          ▼     │
+│ ┌───────┐┌────────┐┌───────┐┌──────┐┌────────┐┌────────┐┌───────┐ │
+│ │Memory ││Planner ││Collect││Analyz││Evaluat.││Reflect.││Builder│ │
+│ │ Agent ││ Agent  ││Agent  ││Agent ││Engine  ││ Agent  ││ Agent │ │
+│ │       ││        ││       ││      ││(规则)  ││        ││       │ │
+│ │记忆查询││知识图谱 ││多源采集││知识提取││质量/覆盖││策略反思 ││学习系统│ │
+│ │偏好学习││搜索规划 ││去重   ││关系发现││达标判定 ││缺口分析 ││图谱渲染│ │
+│ └───────┘└────────┘└───────┘└──────┘└────────┘└────────┘└───────┘ │
 │       │           │           │           │           │            │
 │       └───────────┴───────────┴───────────┴───────────┘            │
 │                           │                                         │
@@ -92,13 +92,14 @@
 
 | 模式 | 来源 | 在 OpenLearning 中的应用 |
 |------|------|--------------------------|
-| **StateGraph** | open_deep_research | 全局状态驱动，Agent 通过读写共享状态协作 |
-| **Supervisor 路由** | open_deep_research | Supervisor 根据当前状态决定下一个执行的 Agent |
-| **Sub-Agent 子图** | open_deep_research | 每个 Agent 是独立的 LangGraph 子图，可独立测试 |
-| **Reflection 循环** | open_deep_research | Reflector Agent 审查结果，决定是否需要补充采集 |
-| **条件边路由** | open_deep_research | 基于状态字段的条件分支（如资源数量不足→重新采集） |
-| **Skill 模块化** | LangChain Tools | 所有外部能力（搜索/抓取/分析/持久化/渲染）封装为独立 Skill，Agent 通过 Tool 接口调用 |
-| **Human-in-the-loop** | open_deep_research | 关键节点支持人工确认（如学习计划审批） |
+| **StateGraph** | LangGraph | 全局状态驱动，Agent 通过读写共享状态协作 |
+| **LLM Supervisor** | LangGraph | Supervisor 是 LLM Agent，推理决策而非查表跳转 |
+| **Sub-Agent 子图** | LangGraph | 每个 Agent 是独立子图，可独立测试 |
+| **Reflection 循环** | open_deep_research | Reflector + Evaluation Engine 双重审查 |
+| **知识图谱** | 自研 | Analyzer 提取概念+关系，Builder 渲染为可交互图谱 |
+| **Memory 持久化** | MemGPT 启发 | Memory Agent 学习用户偏好，避免重复推荐 |
+| **规则引擎** | 自研 | Evaluation Engine 用规则（非 LLM）做质量/覆盖判定，降低成本 |
+| **Skill 模块化** | LangChain Tools | 所有外部能力封装为独立 Skill |
 
 ### 3.3 Graph 流程
 
@@ -107,7 +108,12 @@ START
   │
   ▼
 ┌─────────────┐
-│   Planner   │  ← 分析需求，生成知识树 + 采集计划
+│   Memory    │  ← 查询用户历史、偏好、已学内容
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│   Planner   │  ← 分析需求，生成知识图谱 + 采集计划
 └──────┬──────┘
        │
        ▼
@@ -117,17 +123,23 @@ START
        │
        ▼
 ┌─────────────┐
-│  Analyzer   │  ← 质量评分 + 摘要生成
+│  Analyzer   │  ← 内容提取 + 知识提取 + 关系发现
 └──────┬──────┘
        │
        ▼
-┌─────────────┐     ┌─────────────┐
-│  Reflector  │────▶│  Collector  │  ← 资源不足？质量不达标？补充采集
-└──────┬──────┘     └─────────────┘
+┌─────────────┐
+│ Evaluation  │  ← 规则引擎：质量/覆盖/多样性检查
+│  Engine     │     不达标 → 返回 Collector 补充
+└──────┬──────┘
        │ (通过)
        ▼
 ┌─────────────┐
-│   Builder   │  ← 生成静态站点
+│  Reflector  │  ← LLM 反思：策略调整、深度优化建议
+└──────┬──────┘
+       │
+       ▼
+┌─────────────┐
+│   Builder   │  ← 生成知识图谱学习系统（非资源列表）
 └──────┬──────┘
        │
        ▼
@@ -146,21 +158,50 @@ START
 
 ### 4.0 Supervisor Agent 与共享状态
 
-#### Supervisor（主图编排器）
+#### Supervisor（LLM 决策者）
 
-Supervisor 是 LangGraph 主图的路由节点，不执行具体任务，而是根据共享状态决定下一步调用哪个 Sub-Agent。
+Supervisor **不是状态机**，而是一个 LLM Agent。它观察全局状态，**推理**下一步应该做什么，而不是查表跳转。
 
 ```python
-from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import create_react_agent
 
+# Supervisor 是一个 LLM Agent，拥有所有 Sub-Agent 作为 tools
+supervisor = create_react_agent(
+    model=ChatOpenAI(model="gpt-4o"),
+    tools=[
+        planner_agent,      # "分析需求，生成知识树"
+        collector_agent,    # "采集资源"
+        analyzer_agent,     # "分析内容，提取知识"
+        evaluator_engine,   # "评估质量（规则引擎）"
+        reflector_agent,    # "反思缺口，决定是否补充"
+        memory_agent,       # "查询/更新用户记忆"
+        builder_agent,      # "生成学习系统"
+    ],
+    state_schema=AgentState,
+    prompt="""你是 OpenLearning 的 Supervisor。
+    观察当前状态，推理下一步应该调用哪个 Agent。
+    不要按固定顺序执行，根据实际情况决策。
+    如果资源质量不够，主动要求补充采集。
+    如果用户已有相关项目记忆，先查询 Memory。
+    """,
+)
+```
+
+#### Shared State（全局状态）
+
+```python
 class AgentState(TypedDict):
     """所有 Agent 共享的全局状态"""
     # 用户输入
     user_request: str                    # "我想学 Rust"
     user_profile: dict                   # {"level": "intermediate", "lang": ["zh","en"]}
 
+    # Memory 输出
+    user_memory: dict                    # 历史项目、偏好、已学内容
+    avoid_list: list[str]                # 已推荐过的资源 URL（去重用）
+
     # Planner 输出
-    learning_plan: dict                  # 知识树 + 采集任务列表
+    knowledge_graph: dict                # 知识图谱（节点+边+依赖关系）
     search_queries: list[str]            # 生成的搜索关键词
 
     # Collector 输出
@@ -168,84 +209,35 @@ class AgentState(TypedDict):
     collected_count: int                 # 已采集数量
 
     # Analyzer 输出
-    analyzed_resources: list[dict]       # 评分 + 摘要后的资源
+    analyzed_resources: list[dict]       # 评分 + 摘要 + 知识提取后的资源
     avg_quality_score: float             # 平均质量分
+    extracted_concepts: list[dict]       # 提取的知识概念
+    concept_relations: list[dict]        # 概念间的关系（前置/进阶/相关）
+
+    # Evaluation Engine 输出
+    evaluation: dict                     # 规则引擎评估结果
+    iteration: int                       # 当前迭代轮次
 
     # Reflector 输出
-    reflection: dict                     # {"pass": bool, "gaps": [...], "suggestions": [...]}
-    iteration: int                       # 当前迭代轮次
-    max_iterations: int                  # 最大迭代轮次
+    reflection: dict                     # LLM 反思：策略调整建议
 
     # Builder 输出
-    site_path: str                       # 生成的站点路径
+    learning_system: dict                # 生成的学习系统（知识图谱+路径+站点）
 
     # 流程控制
     current_agent: str                   # 当前执行的 Agent 名
     status: str                          # running / done / error
-
-def supervisor_router(state: AgentState) -> str:
-    """Supervisor 路由逻辑：根据状态决定下一个 Agent"""
-    if state.get("status") == "done":
-        return END
-
-    current = state.get("current_agent", "")
-
-    # 首次进入
-    if not current:
-        return "planner"
-
-    # 状态机路由
-    transitions = {
-        "planner":  "collector",
-        "collector": "analyzer",
-        "analyzer":  "reflector",
-        "reflector": "builder" if state["reflection"]["pass"] else "collector",
-        "builder":   END,
-    }
-    return transitions.get(current, END)
-
-# 主图定义
-graph = StateGraph(AgentState)
-graph.add_node("planner", planner_agent)
-graph.add_node("collector", collector_agent)
-graph.add_node("analyzer", analyzer_agent)
-graph.add_node("reflector", reflector_agent)
-graph.add_node("builder", builder_agent)
-
-graph.add_edge(START, "planner")
-graph.add_conditional_edges("planner", supervisor_router)
-graph.add_conditional_edges("collector", supervisor_router)
-graph.add_conditional_edges("analyzer", supervisor_router)
-graph.add_conditional_edges("reflector", supervisor_router)
-graph.add_conditional_edges("builder", supervisor_router)
-
-app = graph.compile()
 ```
 
-#### 状态流转图
+#### 与状态机的区别
 
-```
-START
-  │
-  ▼
-┌─────────┐    state["learning_plan"]
-│ Planner │───────────────────────────────────┐
-└─────────┘                                   │
-                                              ▼
-┌─────────┐    state["raw_resources"]    ┌──────────┐
-│Analyzer │◀─────────────────────────────│Collector │
-└────┬────┘                              └──────────┘
-     │                                        ▲
-     ▼                                        │
-┌───────────┐   state["reflection"]["pass"]   │
-│ Reflector │──── false (有缺口) ─────────────┘
-└────┬──────┘
-     │ true (通过)
-     ▼
-┌─────────┐    state["site_path"]
-│ Builder │──────────────▶ END
-└─────────┘
-```
+| 维度 | 状态机（旧） | LLM Supervisor（新） |
+|------|-------------|---------------------|
+| **路由方式** | `transitions[current]` 查表 | LLM 观察状态，推理决策 |
+| **灵活性** | 固定顺序 planner→collector→... | 可跳过、可重复、可并行 |
+| **异常处理** | 无法处理意外情况 | LLM 可自主调整策略 |
+| **人机交互** | 不支持 | 可在关键节点请求人工确认 |
+| **示例** | collector→analyzer（固定） | "Memory 已有类似项目，先查 Memory 再决定是否重新采集" |
 
 ### 4.1 Planner Agent（学习规划子图）
 
@@ -346,251 +338,384 @@ def collector_agent(state: AgentState) -> dict:
 - **增量更新**：记录上次采集时间，仅抓取新增/变更内容
 - **Reflector 驱动重采**：当 Reflector 标记资源缺口时，定向补充采集
 
-### 4.3 Analyzer Agent（内容分析子图）
+### 4.3 Analyzer Agent（知识提取子图）
 
-**职责**：对采集到的原始资源进行内容提取、质量评估、智能标注和摘要生成。
+**职责**：对采集到的原始资源进行内容提取、知识提取、关系发现和质量标注。**不只是评分和摘要，而是从资源中提取结构化知识，构建知识图谱的节点和边。**
 
 ```python
 def analyzer_agent(state: AgentState) -> dict:
-    """Analyzer 子图：通过 Skill 内容提取 → 评分 → 标注 → 摘要"""
+    """Analyzer 子图：内容提取 → 知识提取 → 关系发现 → 标注"""
     resources = state["raw_resources"]
+    knowledge_graph = state.get("knowledge_graph", {})
     analyzed = []
+    all_concepts = []
+    all_relations = []
 
     for resource in resources:
         # 1. 内容提取（调用 fetch Skill）
         content = await fetch_page.ainvoke({"url": resource["url"]})
 
-        # 2. 质量评分（调用 analyze Skill）
-        scores = await score.ainvoke({
-            "content": content, "metadata": resource.get("metadata", {})
+        # 2. 知识提取（LLM）— 从内容中提取概念、定义、原理
+        knowledge = await extract_knowledge.ainvoke({
+            "content": content,
+            "existing_concepts": [c["name"] for c in all_concepts],
         })
 
-        # 3. 智能标注（调用 analyze Skill）
+        # 3. 关系发现（LLM）— 发现概念间的前置/进阶/相关关系
+        relations = await discover_relations.ainvoke({
+            "new_concepts": knowledge["concepts"],
+            "existing_graph": knowledge_graph,
+        })
+
+        # 4. 智能标注
         tags = await tag.ainvoke({"content": content})
 
-        # 4. 摘要生成（调用 analyze Skill）
-        summary = await summarize.ainvoke({"content": content, "lang": "zh"})
+        all_concepts.extend(knowledge["concepts"])
+        all_relations.extend(relations)
 
         analyzed.append({
             **resource,
             "content_preview": content[:500],
-            "quality_scores": scores,
-            "quality_score": weighted_average(scores.values()),
+            "knowledge": knowledge,           # 提取的知识点
             "tags": tags,
-            "summary": summary,
         })
 
-    # 5. 持久化（调用 persist Skill）
+    # 5. 合并到知识图谱
+    updated_graph = merge_into_graph(knowledge_graph, all_concepts, all_relations)
+
+    # 6. 持久化
     for res in analyzed:
         await save_resource.ainvoke({"resource": res})
 
-    avg_score = mean([r["quality_score"] for r in analyzed])
     return {
         "analyzed_resources": analyzed,
-        "avg_quality_score": avg_score,
+        "extracted_concepts": all_concepts,
+        "concept_relations": all_relations,
+        "knowledge_graph": updated_graph,
         "current_agent": "analyzer",
     }
 ```
 
-**输出写入状态**：`analyzed_resources`, `avg_quality_score`
+**输出写入状态**：`analyzed_resources`, `extracted_concepts`, `concept_relations`, `knowledge_graph`
 
-#### 分析流水线
+#### 知识提取流水线
 
 ```
-原始资源 (URL + 元数据)
+原始资源 (URL + 正文)
          │
          ▼
   ┌──────────────┐
-  │ 内容提取      │  ← 正文提取 (readability/trafilatura)
-  │              │     代码块保留
-  │              │     元数据提取 (作者、日期、标签)
+  │ 内容提取      │  ← 正文 / 代码块 / 元数据
   └──────┬───────┘
          │
          ▼
   ┌──────────────┐
-  │ 质量评估      │  ← 多维度打分 (0-10)
-  │ (LLM + 规则) │
-  └──────┬───────┘
-         │
-         ├── 内容质量: 深度、准确性、原创性
-         ├── 教学质量: 结构清晰度、示例丰富度、难度标注
-         ├── 时效性:   发布日期、技术版本是否过时
-         ├── 权威性:   作者背景、平台可信度、引用/点赞数
-         └── 可读性:   排版、语言流畅度、多媒体丰富度
-         │
-         ▼
+  │ 知识提取      │  ← LLM 从内容中提取：
+  │ (LLM)        │     • 概念 (concept): 名称 + 定义 + 示例
+  └──────┬───────┘     • 原理 (principle): 核心规则/公式/模式
+         │              • 技术 (technology): 工具/框架/库
+         ▼              • 最佳实践 (best_practice)
   ┌──────────────┐
-  │ 智能标注      │
-  └──────┬───────┘
-         │
-         ├── 难度标签: beginner / intermediate / advanced
-         ├── 内容类型: tutorial / deep-dive / overview / hands-on
-         ├── 前置知识: 需要先学什么
-         ├── 关键概念: 涵盖的核心知识点
-         └── 预估时长: 阅读/观看所需时间
-         │
-         ▼
+  │ 关系发现      │  ← LLM 发现概念间的关系：
+  │ (LLM)        │     • prerequisite(A, B): 学 B 前要先学 A
+  └──────┬───────┘     • extends(A, B): A 是 B 的进阶
+         │              • related(A, B): A 和 B 相关
+         ▼              • contradicts(A, B): A 和 B 有冲突
   ┌──────────────┐
-  │ 摘要生成      │  ← LLM 生成 3-5 句话的中文摘要
-  │ (LLM 驱动)   │     提取核心要点 (3-5 个 bullet points)
+  │ 图谱合并      │  ← 新概念合并到已有知识图谱
+  │              │     去重、更新关系、计算节点权重
   └──────────────┘
 ```
 
-### 4.4 Reflector Agent（审查反馈子图）
-
-**职责**：审查 Analyzer 的输出，判断资源是否充足、质量是否达标，决定是否需要补充采集。这是实现 open_deep_research 中 **Reflection 循环** 的关键节点。
+#### 知识图谱数据结构
 
 ```python
-class ReflectorState(TypedDict):
-    analyzed_resources: list[dict]
-    learning_plan: dict
-    reflection: dict          # {"pass": bool, "gaps": [...], "suggestions": [...]}
-    iteration: int
+# 知识图谱节点
+{
+    "id": "rust_ownership",
+    "name": "所有权 (Ownership)",
+    "type": "concept",                    # concept / principle / technology / practice
+    "definition": "Rust 的内存管理模型...",
+    "examples": ["let s = String::from(\"hello\")"],
+    "resources": ["url1", "url3"],        # 来源资源
+    "difficulty": "intermediate",
+    "importance": 0.9,                    # 在图谱中的重要度
+}
 
-def reflector_agent(state: AgentState) -> dict:
-    """Reflector 子图：审查资源质量 → 识别缺口 → 决定是否重采"""
-    resources = state["analyzed_resources"]
-    plan = state["learning_plan"]
-    iteration = state.get("iteration", 0)
+# 知识图谱边
+{
+    "from": "rust_borrowing",
+    "to": "rust_ownership",
+    "type": "prerequisite",               # prerequisite / extends / related
+    "weight": 0.95,                       # 关系强度
+    "reason": "借用是所有权的延伸，必须先理解所有权",
+}
+```
 
-    # 1. 覆盖度检查：每个子主题是否有足够资源？
-    coverage = check_topic_coverage(resources, plan["tree"])
+### 4.4 Memory Agent（用户记忆子图）
 
-    # 2. 质量检查：平均分是否达标？
-    avg_score = state.get("avg_quality_score", 0)
-    quality_ok = avg_score >= 6.0
+**职责**：学习用户偏好、记录历史项目、避免重复推荐。是 Agent 的**长期记忆**。
 
-    # 3. 多样性检查：资源类型是否多样？
-    diversity = check_type_diversity(resources)
+```python
+def memory_agent(state: AgentState) -> dict:
+    """Memory 子图：查询历史 → 学习偏好 → 过滤重复"""
+    user_id = state["user_profile"].get("user_id")
 
-    # 4. 生成反思报告
-    gaps = []
-    if coverage["missing_topics"]:
-        gaps.append(f"缺少主题覆盖: {coverage['missing_topics']}")
-    if not quality_ok:
-        gaps.append(f"平均质量分 {avg_score:.1f} 低于阈值 6.0")
-    if diversity["missing_types"]:
-        gaps.append(f"缺少资源类型: {diversity['missing_types']}")
+    # 1. 查询历史项目
+    history = await query_db.ainvoke({
+        "sql": "SELECT * FROM projects WHERE user_id = ? ORDER BY updated_at DESC LIMIT 5",
+        "params": [user_id],
+    })
 
-    passed = len(gaps) == 0 or iteration >= state.get("max_iterations", 3)
+    # 2. 查询用户偏好（从历史行为学习）
+    preferences = await learn_preferences.ainvoke({"history": history})
+
+    # 3. 获取已推荐资源列表（去重用）
+    avoid_list = await query_db.ainvoke({
+        "sql": "SELECT url FROM resources WHERE project_id IN (SELECT id FROM projects WHERE user_id = ?)",
+        "params": [user_id],
+    })
+
+    # 4. 检查是否有类似项目（避免重复劳动）
+    similar_project = find_similar_project(history, state["user_request"])
 
     return {
-        "reflection": {
-            "pass": passed,
-            "gaps": gaps,
-            "suggestions": generate_suggestions(gaps),
+        "user_memory": {
+            "history": history,
+            "preferences": preferences,
+            "similar_project": similar_project,
+        },
+        "avoid_list": [r["url"] for r in avoid_list],
+        "current_agent": "memory",
+    }
+```
+
+**输出写入状态**：`user_memory`, `avoid_list`
+
+#### 记忆维度
+
+| 维度 | 存储内容 | 用途 |
+|------|----------|------|
+| **历史项目** | 主题、资源数、质量分、完成度 | 避免重复采集，推荐进阶内容 |
+| **用户偏好** | 偏好资源类型、语言、难度、学习风格 | 个性化排序和筛选 |
+| **已学内容** | 已掌握的概念、已完成的资源 | 跳过基础，推荐进阶 |
+| **反馈记录** | 用户对资源的评分、收藏、跳过行为 | 优化推荐算法 |
+
+---
+
+### 4.5 Evaluation Engine（规则引擎）
+
+**职责**：用**规则**（非 LLM）做质量检查、覆盖度检查、多样性检查。成本低、速度快、可解释。
+
+```python
+def evaluator_engine(state: AgentState) -> dict:
+    """Evaluation Engine：规则驱动的质量/覆盖/多样性检查"""
+    resources = state["analyzed_resources"]
+    graph = state["knowledge_graph"]
+    iteration = state.get("iteration", 0)
+
+    # 1. 质量检查（规则）
+    quality = rule_check_quality(resources, min_avg=6.0, min_single=3.0)
+
+    # 2. 覆盖检查（对比知识图谱节点 vs 已有资源）
+    coverage = rule_check_coverage(graph, resources)
+
+    # 3. 多样性检查（规则）
+    diversity = rule_check_diversity(resources, min_types=3)
+
+    # 4. 时效性检查（规则）
+    freshness = rule_check_freshness(resources, min_recent_ratio=0.3)
+
+    # 5. 综合判定
+    all_passed = all([quality["pass"], coverage["pass"], diversity["pass"], freshness["pass"]])
+    forced_pass = iteration >= state.get("max_iterations", 3)
+
+    return {
+        "evaluation": {
+            "pass": all_passed or forced_pass,
+            "quality": quality,
             "coverage": coverage,
+            "diversity": diversity,
+            "freshness": freshness,
         },
         "iteration": iteration + 1,
+        "current_agent": "evaluator",
+    }
+```
+
+**输出写入状态**：`evaluation`, `iteration`
+
+#### 规则引擎检查项
+
+| 检查项 | 规则 | 不达标动作 |
+|--------|------|-----------|
+| **质量** | 平均分 ≥ 6.0，单个 ≥ 3.0 | 淘汰低分资源，标记补充 |
+| **覆盖** | 知识图谱每个核心节点 ≥ 1 个资源 | 生成补充搜索词 |
+| **多样性** | 资源类型 ≥ 3 种 | 针对缺失类型定向搜索 |
+| **时效** | 最近 1 年资源占比 ≥ 30% | 增加时间限定搜索 |
+| **难度** | 三个难度级别均有覆盖 | 针对缺失难度补充 |
+
+---
+
+### 4.6 Tool Router（工具路由）
+
+**职责**：根据当前任务上下文，选择最合适的 Skill/Tool 调用。避免 Agent 硬编码工具选择。
+
+```python
+def tool_router_agent(state: AgentState) -> dict:
+    """Tool Router：根据任务上下文选择最佳工具组合"""
+    task = state.get("current_task", "")
+    context = state.get("task_context", {})
+
+    # LLM 推理：当前任务应该调用哪些工具
+    tool_plan = await llm.plan_tool_usage(
+        task=task,
+        available_tools=get_all_tools(),
+        context=context,
+    )
+
+    # tool_plan 示例:
+    # {
+    #   "tools": ["web_search", "arxiv_search"],
+    #   "params": [
+    #     {"query": "Rust ownership tutorial", "max_results": 20},
+    #     {"query": "Rust ownership paper", "max_results": 5},
+    #   ],
+    #   "reason": "用户想学所有权，需要教程+论文两种资源"
+    # }
+
+    return {
+        "tool_plan": tool_plan,
+        "current_agent": "tool_router",
+    }
+```
+
+**使用场景**：
+- Supervisor 决定 "需要补充采集" → Tool Router 选择具体搜索源和关键词
+- 用户请求 "找 Rust 视频教程" → Tool Router 选择 youtube_search + bilibili_search
+- 需要 "深入分析这个论文" → Tool Router 选择 fetch_page + parse_pdf + extract_knowledge
+
+---
+
+### 4.7 Reflector Agent（策略反思子图）
+
+**职责**：基于 Evaluation Engine 的结果，用 LLM 进行**策略层面的反思**——不是重复规则检查，而是思考"为什么不够好"和"应该怎么调整"。
+
+```python
+def reflector_agent(state: AgentState) -> dict:
+    """Reflector 子图：LLM 策略反思（非规则检查）"""
+    evaluation = state["evaluation"]
+    graph = state["knowledge_graph"]
+    memory = state.get("user_memory", {})
+
+    # LLM 反思：基于评估结果，生成策略调整建议
+    reflection = await llm.reflect(
+        evaluation=evaluation,
+        knowledge_graph=graph,
+        user_memory=memory,
+        prompt="""分析评估结果，回答：
+        1. 哪些知识节点资源不足？为什么？（搜索词不够精准？源选择不对？）
+        2. 质量低的资源有什么共同特征？如何避免？
+        3. 用户已有哪些知识？应该跳过什么、深入什么？
+        4. 下一轮采集应该调整什么策略？
+        """,
+    )
+
+    return {
+        "reflection": reflection,
         "current_agent": "reflector",
     }
 ```
 
-**输出写入状态**：`reflection`, `iteration`
+**输出写入状态**：`reflection`
 
-**路由逻辑**：
-- `reflection["pass"] == False` → Supervisor 路由回 Collector，补充采集
-- `reflection["pass"] == True` → Supervisor 路由到 Builder
+#### Reflector vs Evaluation Engine
 
-#### 审查维度
-
-| 维度 | 检查内容 | 不达标处理 |
-|------|----------|-----------|
-| **主题覆盖** | 每个子主题至少 3 个资源 | 生成补充搜索词 → Collector |
-| **质量门槛** | 平均分 ≥ 6.0，无低于 3 分的资源 | 淘汰低分，补充新源 |
-| **类型多样性** | 至少覆盖 3 种资源类型 | 针对缺失类型定向搜索 |
-| **时效性** | 最近 1 年的资源占比 ≥ 30% | 增加时间限定搜索 |
-| **难度分布** | beginner/intermediate/advanced 均有覆盖 | 针对缺失难度补充 |
+| 维度 | Evaluation Engine | Reflector |
+|------|------------------|-----------|
+| **方法** | 规则引擎（if/else） | LLM 推理 |
+| **成本** | 零 token 消耗 | 消耗 token |
+| **速度** | 毫秒级 | 秒级 |
+| **能力** | 质量/覆盖/多样性/时效 | 策略调整/根因分析/个性化建议 |
+| **输出** | pass/fail + 数值 | 文字建议 + 调整方案 |
 
 ---
 
-### 4.5 Builder Agent（站点生成子图）
+### 4.8 Builder Agent（学习系统生成子图）
 
-**职责**：将分析后的资源组织成可浏览的静态课程网站。
+**职责**：不是生成"资源列表网站"，而是生成**知识图谱驱动的学习系统**——包含可交互的知识图谱、个性化学习路径、进度追踪。
 
 ```python
-class BuilderState(TypedDict):
-    analyzed_resources: list[dict]
-    learning_plan: dict
-    site_path: str
-
 def builder_agent(state: AgentState) -> dict:
-    """Builder 子图：通过 Skill 生成静态站点"""
+    """Builder 子图：知识图谱 → 学习路径 → 学习系统"""
+    graph = state["knowledge_graph"]
     resources = state["analyzed_resources"]
-    plan = state["learning_plan"]
+    memory = state.get("user_memory", {})
 
-    # 1. 调用 render Skill 生成站点
-    site_path = await build_site.ainvoke({
-        "resources": resources,
-        "plan": plan,
+    # 1. 生成个性化学习路径（知识图谱拓扑排序 + 用户已有知识）
+    learning_path = generate_learning_path(
+        graph=graph,
+        user_knowledge=memory.get("learned_concepts", []),
+        preferences=memory.get("preferences", {}),
+    )
+
+    # 2. 为每个知识点匹配最佳资源
+    knowledge_resources = match_resources_to_concepts(graph, resources)
+
+    # 3. 生成学习系统站点
+    site_path = await build_learning_system.ainvoke({
+        "knowledge_graph": graph,
+        "learning_path": learning_path,
+        "knowledge_resources": knowledge_resources,
         "output_dir": "./output/",
     })
 
-    # 2. 调用 git Skill 自动提交
-    await checkpoint.ainvoke({
-        "message": f"build: generate site with {len(resources)} resources"
-    })
+    # 4. 保存项目（供 Memory Agent 未来使用）
+    await save_project.ainvoke({"title": state["user_request"], "knowledge_graph": graph})
 
     return {
-        "site_path": site_path,
+        "learning_system": {"site_path": site_path, "knowledge_graph": graph, "learning_path": learning_path},
         "current_agent": "builder",
         "status": "done",
     }
 ```
 
-**输出写入状态**：`site_path`, `status`
+**输出写入状态**：`learning_system`, `status`
 
-#### 生成的站点结构
+#### 生成的学习系统结构
 
 ```
 output/
-├── index.html                # 首页：学习主题概览 + 学习路径图
-├── learning-path.html        # 学习路径：阶段化推荐
-├── resources/
-│   ├── by-topic/             # 按主题分类
-│   │   ├── fundamentals.html
-│   │   ├── deep-learning.html
-│   │   └── nlp.html
-│   ├── by-difficulty/        # 按难度分层
-│   │   ├── beginner.html
-│   │   ├── intermediate.html
-│   │   └── advanced.html
-│   ├── by-type/              # 按资源类型
-│   │   ├── videos.html
-│   │   ├── articles.html
-│   │   ├── papers.html
-│   │   └── repos.html
-│   └── timeline.html         # 时间线：最新资源动态
-├── search.html               # 客户端搜索 (Fuse.js)
-├── bookmarks.html            # 个人收藏 (本地存储)
-├── changelog.html            # 更新日志
-├── assets/
-│   ├── css/style.css
-│   ├── js/app.js
-│   └── images/
+├── index.html                    # 首页：知识图谱全景
+├── graph.html                    # 可交互知识图谱 (D3.js / Cytoscape.js)
+│                                 #   节点=知识点，边=依赖关系
+│                                 #   颜色=掌握程度，点击→学习页
+├── learning-path.html            # 个性化学习路径（拓扑排序+跳过已掌握）
+├── knowledge/
+│   ├── ownership.html            # 每个知识点独立页面
+│   ├── borrowing.html            #   定义/原理/示例/关联/资源
+│   └── ...
+├── progress.html                 # 学习进度追踪 (localStorage)
+├── search.html                   # 全文搜索
 └── data/
-    ├── resources.json        # 结构化资源数据
-    └── search-index.json     # 搜索索引
+    ├── knowledge-graph.json      # 知识图谱数据
+    ├── learning-path.json        # 学习路径
+    └── resources.json            # 资源数据
 ```
 
-#### 站点特性
+#### 学习系统特性
 
-| 特性 | 实现方案 |
-|------|----------|
-| 框架 | 纯静态 HTML + Tailwind CSS (零依赖，即开即用) |
-| 搜索 | Fuse.js 客户端全文搜索 |
-| 收藏 | localStorage 本地收藏夹 |
-| 响应式 | Mobile-first 设计 |
-| 暗色模式 | CSS 变量 + 系统偏好检测 |
-| 学习路径 | Mermaid.js 可视化知识图谱 |
-| SEO | 语义化 HTML + meta 标签 |
-| 部署 | 支持 Vercel / Netlify / GitHub Pages 一键部署 |
+| 特性 | 实现方案 | 价值 |
+|------|----------|------|
+| **知识图谱** | D3.js / Cytoscape.js | 全局视角理解知识结构 |
+| **学习路径** | 拓扑排序 + 用户画像 | 个性化，跳过已掌握 |
+| **知识点页** | 每个概念独立页面 | 聚焦学习，不被资源淹没 |
+| **进度追踪** | localStorage | 可视化学习进度 |
+| **资源匹配** | 概念↔资源关联 | 按需学习 |
 
 ## 5. Agent 基础设施 (`4.B`)
 
 > 运行时支撑层——不直接面向用户，但决定了 Agent 的效率、质量和可维护性。
-
-### 5.1 上下文压缩 (Context Compression)
 
 ### 5.1 上下文压缩 (Context Compression)
 
@@ -678,9 +803,9 @@ Agent (bind_tools)
     │
     ├── search Skill   → web_search / arxiv_search / youtube_search / github_search
     ├── fetch Skill    → fetch_page / extract / parse_pdf
-    ├── analyze Skill  → score / summarize / tag / compare
+    ├── analyze Skill  → score / summarize / tag / extract_knowledge / discover_relations / compare
     ├── persist Skill  → save_resource / query_db / export
-    ├── render Skill   → build_site / preview / deploy
+    ├── render Skill   → build_learning_system / preview / deploy
     └── git Skill      → checkpoint / log / diff
 ```
 
@@ -698,11 +823,13 @@ Agent (bind_tools)
 | **analyze** | `score` | 多维度质量评分 | `content`, `metadata` | 6 维分数 |
 | | `summarize` | 摘要生成 | `content`, `lang` | 摘要 + 要点 |
 | | `tag` | 智能标注 | `content` | 难度/类型/概念 |
+| | `extract_knowledge` | 知识提取 | `content`, `existing_concepts` | 概念/原理/技术列表 |
+| | `discover_relations` | 关系发现 | `new_concepts`, `existing_graph` | 前置/进阶/相关关系 |
 | | `compare` | 资源对比 | `resource_a`, `resource_b` | 差异报告 |
 | **persist** | `save_resource` | 保存到 SQLite | `resource` | 确认 |
 | | `query_db` | 查询数据库 | `sql` / `filter` | 结果集 |
 | | `export` | 导出数据 | `format`, `filter` | 文件路径 |
-| **render** | `build_site` | 生成静态站点 | `resources`, `plan` | 站点路径 |
+| **render** | `build_learning_system` | 生成学习系统 | `graph`, `path`, `resources` | 站点路径 |
 | | `preview` | 启动预览 | `port` | URL |
 | | `deploy` | 部署到托管 | `target` | 部署 URL |
 | **git** | `checkpoint` | Git 提交 | `message` | commit hash |
@@ -743,9 +870,9 @@ LangGraph Agent 通过 `bind_tools()` 绑定 Skill，详见 §4.0 Supervisor 代
 skills:
   search:  { module: openlearning.skills.search,  tools: [web_search, arxiv_search, youtube_search, github_search] }
   fetch:   { module: openlearning.skills.fetch,   tools: [fetch_page, extract, parse_pdf] }
-  analyze: { module: openlearning.skills.analyze,  tools: [score, summarize, tag, compare], requires: [fetch] }
+  analyze: { module: openlearning.skills.analyze,  tools: [score, summarize, tag, extract_knowledge, discover_relations, compare], requires: [fetch] }
   persist: { module: openlearning.skills.persist,  tools: [save_resource, query_db, export] }
-  render:  { module: openlearning.skills.render,   tools: [build_site, preview, deploy] }
+  render:  { module: openlearning.skills.render,   tools: [build_learning_system, preview, deploy] }
   git:     { module: openlearning.skills.git,      tools: [checkpoint, log, diff] }
   # 用户自定义
   custom:  { module: ./skills/my_custom.py,        tools: [my_tool] }
@@ -1309,12 +1436,15 @@ open_learning/
 │       ├── agents/           # LangGraph Multi-Agent
 │       │   ├── __init__.py
 │       │   ├── state.py      # AgentState 共享状态定义
-│       │   ├── supervisor.py # Supervisor 主图路由
+│       │   ├── supervisor.py # LLM Supervisor (create_react_agent)
+│       │   ├── memory.py     # Memory Agent 子图
 │       │   ├── planner.py    # Planner Agent 子图
 │       │   ├── collector.py  # Collector Agent 子图
-│       │   ├── analyzer.py   # Analyzer Agent 子图
-│       │   ├── reflector.py  # Reflector Agent 子图
-│       │   ├── builder.py    # Builder Agent 子图
+│       │   ├── analyzer.py   # Analyzer Agent 子图 (知识提取)
+│       │   ├── evaluator.py  # Evaluation Engine (规则引擎)
+│       │   ├── tool_router.py# Tool Router (工具路由)
+│       │   ├── reflector.py  # Reflector Agent 子图 (策略反思)
+│       │   ├── builder.py    # Builder Agent 子图 (学习系统)
 │       │   └── graph.py      # 主图编译 & Skill 绑定
 │       │
 │       ├── skills/           # Skill 模块 (LangChain Tools)
@@ -1322,9 +1452,9 @@ open_learning/
 │       │   ├── registry.py   # Skill 注册 & 发现
 │       │   ├── search.py     # 搜索 Skill (web/arxiv/youtube/github)
 │       │   ├── fetch.py      # 抓取 Skill (page/extract/pdf)
-│       │   ├── analyze.py    # 分析 Skill (score/summarize/tag)
+│       │   ├── analyze.py    # 分析 Skill (score/summarize/tag/extract_knowledge/discover_relations)
 │       │   ├── persist.py    # 持久化 Skill (save/query/export)
-│       │   ├── render.py     # 渲染 Skill (build/preview/deploy)
+│       │   ├── render.py     # 渲染 Skill (build_learning_system/preview/deploy)
 │       │   └── git.py        # Git Skill (checkpoint/log/diff)
 │       │
 │       ├── context/          # 上下文管理
