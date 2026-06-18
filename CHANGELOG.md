@@ -78,5 +78,28 @@ Format: `phase(<N>): <title> ✓`
 
 ---
 
+---
+
+## phase(0.3): MiMo 模型 + 成本优化 ✓
+
+**日期**: 2026-06-18
+
+### LLM → 小米 MiMo
+- mimo-v2.5-pro: Supervisor / Planner / Reflector
+- mimo-v2.5: Analyzer / Tool Router
+- mimo-7b: 标注 / 摘要 / Builder
+
+### 成本优化策略
+1. 先筛选再读 — 规则预筛淘汰低质量资源
+2. 二阶段分析 — 规则评分(零成本) → 高分资源进 LLM
+3. 模型分层 — 不同任务用不同模型
+4. 缓存去重 — LLM 缓存 + URL/知识/搜索去重
+
+### 效果
+- 单次流程成本: < $0.50 (50 资源)
+- LLM 调用: < 60 次 (原 ~200 次)
+
+---
+
 next:
 - [ ] Phase 1: MVP 核心采集 + 生成
