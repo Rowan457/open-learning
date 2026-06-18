@@ -197,7 +197,7 @@ class AgentState(TypedDict):
     user_profile: dict                   # {"level": "intermediate", "lang": ["zh","en"]}
 
     # Memory 输出
-    user_memory: dict                    # 历史项目、偏好、已学内容
+    user_memory: dict                    # 三层记忆：项目/偏好/学习
     avoid_list: list[str]                # 已推荐过的资源 URL（去重用）
 
     # Planner 输出
@@ -490,36 +490,142 @@ def analyzer_agent(state: AgentState) -> dict:
 
 ### 4.4 Memory Agent（用户记忆子图）
 
-**职责**：学习用户偏好、记录历史项目、避免重复推荐。是 Agent 的**长期记忆**。
+**职责**：管理用户的三层记忆——**项目记忆**（做过什么）、**偏好记忆**（喜欢什么）、**学习记忆**（掌握了什么）。学习记忆是核心差异化能力，让 Builder 生成路径时能跳过已掌握内容。
+
+#### 三层记忆架构
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Memory Agent                          │
+│                                                         │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │ 第一层：项目记忆 (Project Memory)                │    │
+│  │ • 历史项目列表 (主题/时间/资源数/完成度)          │    │
+│  │ • 已推荐资源 URL (去重用)                         │    │
+│  │ • 相似项目检测 (避免重复劳动)                      │    │
+│  └─────────────────────────────────────────────────┘    │
+│                         │                               │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │ 第二层：偏好记忆 (Preference Memory)             │    │
+│  │ • 资源类型偏好 (视频 40% / 文章 35% / 论文 25%)  │    │
+│  │ • 语言偏好 (中文 60% / 英文 40%)                 │    │
+│  │ • 难度偏好 (从历史行为推断)                       │    │
+│  │ • 学习风格 (视觉型 / 阅读型 / 动手型)            │    │
+│  └─────────────────────────────────────────────────┘    │
+│                         │                               │
+│  ┌─────────────────────────────────────────────────┐    │
+│  │ 第三层：学习记忆 (Learning Memory) ★ 核心        │    │
+│  │                                                  │    │
+│  │  概念掌握度 ─────────────────────────────────    │    │
+│  │  │ concept_id       │ mastery  │ learned_at │    │    │
+│  │  │ rust_ownership   │ 0.9      │ 2026-05-01 │    │    │
+│  │  │ rust_borrowing   │ 0.7      │ 2026-05-10 │    │    │
+│  │  │ rust_lifetimes   │ 0.3      │ 2026-06-01 │    │    │
+│  │  │ rust_traits      │ 0.0      │ null       │    │    │
+│  │                                                  │    │
+│  │  学习轨迹 ───────────────────────────────────    │    │
+│  │  │ concept_id       │ action   │ timestamp  │    │    │
+│  │  │ rust_ownership   │ started  │ 2026-05-01 │    │    │
+│  │  │ rust_ownership   │ practiced│ 2026-05-05 │    │    │
+│  │  │ rust_ownership   │ mastered │ 2026-05-15 │    │    │
+│  │  │ rust_borrowing   │ started  │ 2026-05-10 │    │    │
+│  │                                                  │    │
+│  │  资源消费 ───────────────────────────────────    │    │
+│  │  │ resource_url     │ time_spent│ rating    │    │    │
+│  │  │ https://...      │ 45min     │ 4/5       │    │    │
+│  │  │ https://...      │ 20min     │ 2/5       │    │    │
+│  │                                                  │    │
+│  │  间隔重复 ───────────────────────────────────    │    │
+│  │  │ concept_id       │ next_review│ interval  │    │    │
+│  │  │ rust_ownership   │ 2026-06-20 │ 30 days   │    │    │
+│  │  │ rust_borrowing   │ 2026-06-18 │ 7 days    │    │    │
+│  └─────────────────────────────────────────────────┘    │
+└─────────────────────────────────────────────────────────┘
+```
+
+#### Memory Agent 代码
 
 ```python
 def memory_agent(state: AgentState) -> dict:
-    """Memory 子图：查询历史 → 学习偏好 → 过滤重复"""
+    """Memory 子图：三层记忆查询 → 学习状态分析 → 个性化建议"""
     user_id = state["user_profile"].get("user_id")
 
-    # 1. 查询历史项目
+    # ── 第一层：项目记忆 ─────────────────────────────
     history = await query_db.ainvoke({
-        "sql": "SELECT * FROM projects WHERE user_id = ? ORDER BY updated_at DESC LIMIT 5",
+        "sql": "SELECT * FROM projects WHERE user_id = ? ORDER BY updated_at DESC LIMIT 10",
         "params": [user_id],
     })
-
-    # 2. 查询用户偏好（从历史行为学习）
-    preferences = await learn_preferences.ainvoke({"history": history})
-
-    # 3. 获取已推荐资源列表（去重用）
     avoid_list = await query_db.ainvoke({
         "sql": "SELECT url FROM resources WHERE project_id IN (SELECT id FROM projects WHERE user_id = ?)",
         "params": [user_id],
     })
-
-    # 4. 检查是否有类似项目（避免重复劳动）
     similar_project = find_similar_project(history, state["user_request"])
+
+    # ── 第二层：偏好记忆 ─────────────────────────────
+    preferences = await learn_preferences.ainvoke({
+        "resource_interactions": get_user_interactions(user_id),
+        "history": history,
+    })
+
+    # ── 第三层：学习记忆 ─────────────────────────────
+    # 查询当前项目相关的概念掌握度
+    current_topic = extract_topic(state["user_request"])
+    mastery = await query_db.ainvoke({
+        "sql": """
+            SELECT cm.concept_id, cm.mastery, cm.learned_at, cm.last_practiced,
+                   cm.review_count, cm.stability
+            FROM concept_mastery cm
+            JOIN concepts c ON cm.concept_id = c.id
+            WHERE cm.user_id = ? AND (c.domain = ? OR c.domain IS NULL)
+            ORDER BY cm.mastery DESC
+        """,
+        "params": [user_id, current_topic],
+    })
+
+    # 分类：已掌握 / 学习中 / 未开始
+    mastered = [m for m in mastery if m["mastery"] >= 0.8]
+    learning = [m for m in mastery if 0.2 <= m["mastery"] < 0.8]
+    not_started = [m for m in mastery if m["mastery"] < 0.2]
+
+    # 间隔重复：找出需要复习的概念
+    due_reviews = await query_db.ainvoke({
+        "sql": """
+            SELECT concept_id, mastery, stability
+            FROM concept_mastery
+            WHERE user_id = ? AND next_review <= datetime('now')
+            ORDER BY stability ASC
+            LIMIT 5
+        """,
+        "params": [user_id],
+    })
+
+    # 知识缺口分析（对比知识图谱 vs 掌握度）
+    knowledge_graph = state.get("knowledge_graph", {})
+    gaps = analyze_knowledge_gaps(knowledge_graph, mastery)
+
+    # 生成个性化学习建议
+    learning_suggestions = generate_learning_suggestions(
+        mastered=mastered,
+        learning=learning,
+        not_started=not_started,
+        due_reviews=due_reviews,
+        gaps=gaps,
+        preferences=preferences,
+    )
 
     return {
         "user_memory": {
             "history": history,
             "preferences": preferences,
             "similar_project": similar_project,
+            "mastery": {
+                "mastered": mastered,
+                "learning": learning,
+                "not_started": not_started,
+                "due_reviews": due_reviews,
+            },
+            "gaps": gaps,
+            "suggestions": learning_suggestions,
         },
         "avoid_list": [r["url"] for r in avoid_list],
         "current_agent": "memory",
@@ -528,14 +634,53 @@ def memory_agent(state: AgentState) -> dict:
 
 **输出写入状态**：`user_memory`, `avoid_list`
 
+#### 概念掌握度计算
+
+```python
+def calculate_mastery(concept_id: str, user_id: str) -> float:
+    """综合多维度信号计算概念掌握度 (0.0 - 1.0)"""
+    signals = {
+        "resource_completion": 0.3,    # 相关资源完成率
+        "quiz_score": 0.25,            # 测验/练习得分 (如有)
+        "time_spent": 0.15,            # 学习时长 (归一化)
+        "recency": 0.15,               # 最近一次学习的时间衰减
+        "review_count": 0.10,          # 复习次数 (间隔重复)
+        "self_report": 0.05,           # 用户自评 (如有)
+    }
+    # 加权计算
+    score = sum(get_signal(s, concept_id, user_id) * w for s, w in signals.items())
+    return clamp(score, 0.0, 1.0)
+```
+
+#### 间隔重复算法
+
+```python
+def schedule_review(concept_id: str, mastery: float, stability: float) -> dict:
+    """基于 SM-2 算法的间隔重复调度"""
+    if mastery >= 0.9:
+        interval = stability * 2.5          # 已掌握：长间隔
+    elif mastery >= 0.6:
+        interval = stability * 1.5          # 学习中：中间隔
+    else:
+        interval = max(1, stability * 0.5)  # 薄弱：短间隔
+
+    return {
+        "next_review": now() + timedelta(days=interval),
+        "interval": interval,
+        "stability": stability * (1 + 0.1 * mastery),  # 稳定性增长
+    }
+```
+
 #### 记忆维度
 
 | 维度 | 存储内容 | 用途 |
 |------|----------|------|
-| **历史项目** | 主题、资源数、质量分、完成度 | 避免重复采集，推荐进阶内容 |
-| **用户偏好** | 偏好资源类型、语言、难度、学习风格 | 个性化排序和筛选 |
-| **已学内容** | 已掌握的概念、已完成的资源 | 跳过基础，推荐进阶 |
-| **反馈记录** | 用户对资源的评分、收藏、跳过行为 | 优化推荐算法 |
+| **项目记忆** | 历史项目、已推荐 URL、相似项目 | 避免重复采集 |
+| **偏好记忆** | 资源类型/语言/难度/学习风格 | 个性化排序 |
+| **概念掌握度** | 每个概念的 mastery (0-1) + 学习轨迹 | **跳过已掌握，聚焦薄弱点** |
+| **资源消费** | 阅读时长、评分、完成状态 | 推荐高质量资源 |
+| **间隔重复** | 下次复习时间、稳定性、复习次数 | 防止遗忘，长期记忆 |
+| **知识缺口** | 知识图谱中未覆盖的节点 | 定向补充学习 |
 
 ---
 
@@ -688,10 +833,15 @@ def builder_agent(state: AgentState) -> dict:
     resources = state["analyzed_resources"]
     memory = state.get("user_memory", {})
 
-    # 1. 生成个性化学习路径（知识图谱拓扑排序 + 用户已有知识）
+    # 1. 生成个性化学习路径（知识图谱拓扑排序 + Learning Memory）
+    mastery = memory.get("mastery", {})
     learning_path = generate_learning_path(
         graph=graph,
-        user_knowledge=memory.get("learned_concepts", []),
+        mastered=[m["concept_id"] for m in mastery.get("mastered", [])],      # 跳过
+        learning=[m["concept_id"] for m in mastery.get("learning", [])],      # 优先继续
+        not_started=[m["concept_id"] for m in mastery.get("not_started", [])], # 正常安排
+        due_reviews=mastery.get("due_reviews", []),                            # 插入复习
+        gaps=memory.get("gaps", []),                                           # 定向补充
         preferences=memory.get("preferences", {}),
     )
 
@@ -739,15 +889,47 @@ output/
     └── resources.json            # 资源数据
 ```
 
+#### 学习路径生成逻辑
+
+```python
+def generate_learning_path(graph, mastered, learning, not_started, due_reviews, gaps, preferences):
+    """基于知识图谱 + Learning Memory 生成个性化学习路径"""
+    # 1. 拓扑排序（基于 prerequisite 边）
+    topo_order = topological_sort(graph)
+
+    # 2. 分类处理
+    path = []
+    for concept_id in topo_order:
+        if concept_id in mastered:
+            continue  # 已掌握 → 跳过
+        elif concept_id in learning:
+            path.append({"concept": concept_id, "action": "continue", "priority": "high"})
+        elif concept_id in gaps:
+            path.append({"concept": concept_id, "action": "fill_gap", "priority": "high"})
+        else:
+            path.append({"concept": concept_id, "action": "learn", "priority": "normal"})
+
+    # 3. 插入间隔重复复习
+    for review in due_reviews:
+        insert_review(path, review)  # 在合适位置插入复习节点
+
+    # 4. 根据偏好调整资源推荐
+    for step in path:
+        step["resources"] = filter_by_preferences(step["resources"], preferences)
+
+    return path
+```
+
 #### 学习系统特性
 
 | 特性 | 实现方案 | 价值 |
 |------|----------|------|
 | **知识图谱** | D3.js / Cytoscape.js | 全局视角理解知识结构 |
-| **学习路径** | 拓扑排序 + 用户画像 | 个性化，跳过已掌握 |
+| **个性化路径** | 拓扑排序 + 掌握度 + 间隔重复 | 跳过已掌握，优先薄弱点，插入复习 |
 | **知识点页** | 每个概念独立页面 | 聚焦学习，不被资源淹没 |
-| **进度追踪** | localStorage | 可视化学习进度 |
-| **资源匹配** | 概念↔资源关联 | 按需学习 |
+| **进度追踪** | localStorage + concept_mastery 表 | 可视化掌握度变化 |
+| **资源匹配** | 概念↔资源关联 + 偏好过滤 | 按需学习，个性化推荐 |
+| **间隔重复** | SM-2 算法调度复习 | 防止遗忘，长期记忆 |
 
 ## 5. Agent 基础设施 (`4.B`)
 
@@ -841,6 +1023,7 @@ Agent (bind_tools)
     ├── fetch Skill    → fetch_page / extract / parse_pdf
     ├── analyze Skill  → score / summarize / tag / extract_knowledge / discover_relations / compare
     ├── persist Skill  → save_resource / query_db / export
+    ├── memory Skill   → get_mastery / update_mastery / get_preferences / record_event
     ├── render Skill   → build_learning_system / preview / deploy
     └── git Skill      → checkpoint / log / diff
 ```
@@ -865,6 +1048,10 @@ Agent (bind_tools)
 | **persist** | `save_resource` | 保存到 SQLite | `resource` | 确认 |
 | | `query_db` | 查询数据库 | `sql` / `filter` | 结果集 |
 | | `export` | 导出数据 | `format`, `filter` | 文件路径 |
+| **memory** | `get_mastery` | 查询概念掌握度 | `user_id`, `domain` | 掌握度列表 |
+| | `update_mastery` | 更新掌握度 | `user_id`, `concept_id`, `event` | 更新确认 |
+| | `get_preferences` | 查询用户偏好 | `user_id` | 偏好数据 |
+| | `record_event` | 记录学习事件 | `user_id`, `concept_id`, `event` | 确认 |
 | **render** | `build_learning_system` | 生成学习系统 | `graph`, `path`, `resources` | 站点路径 |
 | | `preview` | 启动预览 | `port` | URL |
 | | `deploy` | 部署到托管 | `target` | 部署 URL |
@@ -909,6 +1096,7 @@ skills:
   analyze: { module: openlearning.skills.analyze,  tools: [score, summarize, tag, extract_knowledge, discover_relations, compare], requires: [fetch] }
   persist: { module: openlearning.skills.persist,  tools: [save_resource, query_db, export] }
   render:  { module: openlearning.skills.render,   tools: [build_learning_system, preview, deploy] }
+  memory:  { module: openlearning.skills.memory,   tools: [get_mastery, update_mastery, get_preferences, record_event] }
   git:     { module: openlearning.skills.git,      tools: [checkpoint, log, diff] }
   # 用户自定义
   custom:  { module: ./skills/my_custom.py,        tools: [my_tool] }
@@ -1289,6 +1477,68 @@ CREATE TABLE updates (
     new_hash    TEXT,
     detected_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+
+-- ── Learning Memory 表 ──────────────────────────────────
+
+-- 概念表（从 Analyzer 知识提取中填充）
+CREATE TABLE concepts (
+    id          TEXT PRIMARY KEY,          -- "rust_ownership"
+    name        TEXT NOT NULL,             -- "所有权 (Ownership)"
+    domain      TEXT,                      -- "rust" / "machine-learning"
+    type        TEXT NOT NULL,             -- concept / principle / technology / practice
+    definition  TEXT,
+    difficulty  TEXT,                      -- beginner / intermediate / advanced
+    importance  REAL DEFAULT 0.5,          -- 在图谱中的重要度 0-1
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 概念关系表
+CREATE TABLE concept_relations (
+    id          TEXT PRIMARY KEY,
+    from_id     TEXT REFERENCES concepts(id),
+    to_id       TEXT REFERENCES concepts(id),
+    type        TEXT NOT NULL,             -- prerequisite / extends / related
+    weight      REAL DEFAULT 1.0,
+    reason      TEXT
+);
+
+-- 概念掌握度（Learning Memory 核心表）
+CREATE TABLE concept_mastery (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL,
+    concept_id   TEXT REFERENCES concepts(id),
+    mastery      REAL DEFAULT 0.0,        -- 0.0-1.0 掌握度
+    stability    REAL DEFAULT 1.0,        -- 间隔重复稳定性
+    review_count INTEGER DEFAULT 0,       -- 复习次数
+    last_practiced DATETIME,              -- 最后一次学习/练习时间
+    next_review  DATETIME,                -- 下次复习时间（间隔重复）
+    learned_at   DATETIME,                -- 首次学习时间
+    updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, concept_id)
+);
+
+-- 学习轨迹（记录每个概念的学习事件）
+CREATE TABLE learning_events (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    concept_id  TEXT REFERENCES concepts(id),
+    event_type  TEXT NOT NULL,             -- started / practiced / mastered / reviewed / tested
+    resource_id TEXT REFERENCES resources(id),  -- 关联的学习资源
+    score       REAL,                      -- 测验得分 (如有)
+    time_spent  INTEGER,                   -- 学习时长（秒）
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 资源消费记录
+CREATE TABLE resource_interactions (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    resource_id TEXT REFERENCES resources(id),
+    action      TEXT NOT NULL,             -- viewed / completed / bookmarked / rated / skipped
+    rating      REAL,                      -- 1-5 评分
+    time_spent  INTEGER,                   -- 阅读时长（秒）
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
 ### 7.2 配置文件结构
@@ -1626,6 +1876,7 @@ open_learning/
 │       │   ├── fetch.py      # 抓取 Skill (page/extract/pdf)
 │       │   ├── analyze.py    # 分析 Skill (score/summarize/tag/extract_knowledge/discover_relations)
 │       │   ├── persist.py    # 持久化 Skill (save/query/export)
+│       │   ├── memory.py     # 记忆 Skill (get_mastery/update_mastery/get_preferences/record_event)
 │       │   ├── render.py     # 渲染 Skill (build_learning_system/preview/deploy)
 │       │   └── git.py        # Git Skill (checkpoint/log/diff)
 │       │
@@ -1633,8 +1884,15 @@ open_learning/
 │       │   ├── __init__.py
 │       │   ├── manager.py    # ContextManager 主逻辑
 │       │   ├── compressor.py # 三级压缩引擎
-│       │   ├── memory.py     # 外部记忆 (SQLite 辅助)
 │       │   └── snapshot.py   # 上下文快照 & 恢复
+│       │
+│       ├── memory/           # Learning Memory 系统
+│       │   ├── __init__.py
+│       │   ├── mastery.py    # 概念掌握度计算
+│       │   ├── tracker.py    # 学习轨迹记录
+│       │   ├── spaced.py     # 间隔重复算法 (SM-2)
+│       │   ├── gaps.py       # 知识缺口分析
+│       │   └── preferences.py# 用户偏好学习
 │       │
 │       ├── monitoring/       # LangSmith 可观测性
 │       │   ├── __init__.py
