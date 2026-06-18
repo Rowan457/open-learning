@@ -167,7 +167,7 @@ from langgraph.prebuilt import create_react_agent
 
 # Supervisor 是一个 LLM Agent，拥有所有 Sub-Agent 作为 tools
 supervisor = create_react_agent(
-    model=ChatOpenAI(model="gpt-4o"),
+    model=ChatOpenAI(model="mimo-v2.5-pro", base_url=MIMO_BASE_URL),
     tools=[
         planner_agent,      # "分析需求，生成知识树"
         collector_agent,    # "采集资源"
@@ -343,48 +343,77 @@ def collector_agent(state: AgentState) -> dict:
 **职责**：对采集到的原始资源进行内容提取、知识提取、关系发现和质量标注。**不只是评分和摘要，而是从资源中提取结构化知识，构建知识图谱的节点和边。**
 
 ```python
+from openlearning.config import llm_models  # mimo-v2.5-pro / mimo-v2.5 / mimo-7b
+
 def analyzer_agent(state: AgentState) -> dict:
-    """Analyzer 子图：内容提取 → 知识提取 → 关系发现 → 标注"""
+    """Analyzer 子图：二阶段分析 — 规则预筛 → 高分资源 LLM 深度分析"""
     resources = state["raw_resources"]
     knowledge_graph = state.get("knowledge_graph", {})
+    avoid_list = state.get("avoid_list", [])
+
+    # ── 第一阶段：规则预筛（零 LLM 成本）──────────────────
+    # 去重：排除已推荐过的资源
+    fresh = [r for r in resources if r["url"] not in avoid_list]
+
+    # 内容提取（调用 fetch Skill，非 LLM）
+    for r in fresh:
+        r["content"] = await fetch_page.ainvoke({"url": r["url"]})
+
+    # 规则评分（Evaluator Engine，零 LLM 成本）
+    for r in fresh:
+        r["rule_score"] = rule_score(r)  # 来源权威性 + 内容丰富度 + 时效性
+
+    # 筛选：仅高分资源进入第二阶段
+    high_score = [r for r in fresh if r["rule_score"] >= 6.0]
+    low_score = [r for r in fresh if r["rule_score"] < 6.0]
+
+    # 低分资源：仅保留元数据，不做 LLM 分析
+    for r in low_score:
+        r["analysis_level"] = "metadata_only"
+
+    # ── 第二阶段：LLM 深度分析（仅高分资源）────────────────
     analyzed = []
     all_concepts = []
     all_relations = []
 
-    for resource in resources:
-        # 1. 内容提取（调用 fetch Skill）
-        content = await fetch_page.ainvoke({"url": resource["url"]})
+    for resource in high_score:
+        content = resource["content"]
 
-        # 2. 知识提取（LLM）— 从内容中提取概念、定义、原理
+        # 知识提取（mimo-v2.5，中等模型）
         knowledge = await extract_knowledge.ainvoke({
             "content": content,
             "existing_concepts": [c["name"] for c in all_concepts],
+            "model": llm_models.standard,  # mimo-v2.5
         })
 
-        # 3. 关系发现（LLM）— 发现概念间的前置/进阶/相关关系
+        # 关系发现（mimo-v2.5）
         relations = await discover_relations.ainvoke({
             "new_concepts": knowledge["concepts"],
             "existing_graph": knowledge_graph,
+            "model": llm_models.standard,
         })
 
-        # 4. 智能标注
-        tags = await tag.ainvoke({"content": content})
+        # 标注 + 摘要（mimo-7b，轻量模型）
+        tags = await tag.ainvoke({"content": content, "model": llm_models.lite})
+        summary = await summarize.ainvoke({"content": content, "model": llm_models.lite})
 
         all_concepts.extend(knowledge["concepts"])
         all_relations.extend(relations)
 
         analyzed.append({
             **resource,
-            "content_preview": content[:500],
-            "knowledge": knowledge,           # 提取的知识点
+            "knowledge": knowledge,
             "tags": tags,
+            "summary": summary,
+            "analysis_level": "full",
         })
 
-    # 5. 合并到知识图谱
+    # 合并到知识图谱
     updated_graph = merge_into_graph(knowledge_graph, all_concepts, all_relations)
 
-    # 6. 持久化
-    for res in analyzed:
+    # 持久化
+    all_resources = analyzed + low_score
+    for res in all_resources:
         await save_resource.ainvoke({"resource": res})
 
     return {
@@ -398,33 +427,40 @@ def analyzer_agent(state: AgentState) -> dict:
 
 **输出写入状态**：`analyzed_resources`, `extracted_concepts`, `concept_relations`, `knowledge_graph`
 
-#### 知识提取流水线
+#### 二阶段分析流水线
 
 ```
-原始资源 (URL + 正文)
+原始资源 (50 个 URL)
          │
          ▼
-  ┌──────────────┐
-  │ 内容提取      │  ← 正文 / 代码块 / 元数据
-  └──────┬───────┘
-         │
-         ▼
-  ┌──────────────┐
-  │ 知识提取      │  ← LLM 从内容中提取：
-  │ (LLM)        │     • 概念 (concept): 名称 + 定义 + 示例
-  └──────┬───────┘     • 原理 (principle): 核心规则/公式/模式
-         │              • 技术 (technology): 工具/框架/库
-         ▼              • 最佳实践 (best_practice)
-  ┌──────────────┐
-  │ 关系发现      │  ← LLM 发现概念间的关系：
-  │ (LLM)        │     • prerequisite(A, B): 学 B 前要先学 A
-  └──────┬───────┘     • extends(A, B): A 是 B 的进阶
-         │              • related(A, B): A 和 B 相关
-         ▼              • contradicts(A, B): A 和 B 有冲突
-  ┌──────────────┐
-  │ 图谱合并      │  ← 新概念合并到已有知识图谱
-  │              │     去重、更新关系、计算节点权重
-  └──────────────┘
+  ┌──────────────────────────────────────────┐
+  │ 第一阶段：规则预筛（零 LLM 成本）         │
+  │                                          │
+  │  内容提取 (fetch Skill) → 规则评分         │
+  │  • URL 可达性   • 内容长度  • 语言匹配     │
+  │  • 来源权威性   • 时效性    • 重复检测     │
+  └──────────────┬───────────────────────────┘
+                 │
+        ┌────────┴────────┐
+        ▼                 ▼
+   低分 (20)          高分 (30)
+   score < 6          score >= 6
+        │                 │
+        ▼                 ▼
+   仅保留元数据      ┌──────────────────────────────────┐
+   (零 LLM 成本)     │ 第二阶段：LLM 深度分析            │
+                     │                                  │
+                     │  知识提取 (mimo-v2.5)             │
+                     │  • 概念 / 原理 / 技术 / 最佳实践  │
+                     │                                  │
+                     │  关系发现 (mimo-v2.5)             │
+                     │  • prerequisite / extends / related│
+                     │                                  │
+                     │  标注 + 摘要 (mimo-7b，轻量)      │
+                     └──────────────┬───────────────────┘
+                                    │
+                                    ▼
+                             知识图谱更新
 ```
 
 #### 知识图谱数据结构
@@ -505,7 +541,7 @@ def memory_agent(state: AgentState) -> dict:
 
 ### 4.5 Evaluation Engine（规则引擎）
 
-**职责**：用**规则**（非 LLM）做质量检查、覆盖度检查、多样性检查。成本低、速度快、可解释。
+**职责**：用**规则**（非 LLM）做质量检查、覆盖度检查、多样性检查。同时作为二阶段分析的**第一阶段预筛器**，淘汰低质量资源，减少 LLM 调用次数。成本低、速度快、可解释。
 
 ```python
 def evaluator_engine(state: AgentState) -> dict:
@@ -960,7 +996,117 @@ LangGraph + LangSmith 自动集成，Skill Tool 调用和 LLM 调用均自动上
 
 ---
 
-## 6. 开发工作流 (`4.C`)
+### 5.4 成本优化策略
+
+**核心原则**：LLM 调用是最大成本来源。减少调用次数 + 降低单次成本 = 总成本最小化。
+
+#### 策略一：先筛选，再读（Filter First, Read Later）
+
+**问题**：采集到 50 个资源，全部用 LLM 分析 → 50 次 LLM 调用 → 高成本
+
+**方案**：先用规则筛选，淘汰明显低质量资源，只对候选资源做 LLM 分析
+
+```
+采集 50 个资源
+      │
+      ▼
+┌──────────────┐
+│ 规则预筛选    │  ← 零 LLM 成本
+│ (Evaluator)  │
+└──────┬───────┘
+       │
+  ┌────┴────┐
+  ▼         ▼
+淘汰 (20)  候选 (30)
+  │         │
+  丢弃       ▼
+        ┌──────────────┐
+        │ LLM 分析      │  ← 仅 30 次调用（省 40%）
+        │ (Analyzer)    │
+        └──────────────┘
+```
+
+**预筛选规则（Evaluator Engine）**：
+
+| 规则 | 淘汰条件 | 理由 |
+|------|----------|------|
+| URL 可达性 | HTTP 404/403/超时 | 无法访问的资源无价值 |
+| 内容长度 | 正文 < 200 字 | 内容太薄，不值得 LLM 分析 |
+| 语言匹配 | 非用户偏好语言 | 用户不要日文资源 |
+| 域名黑名单 | 已知低质量站点 | 历史数据标记的垃圾源 |
+| 重复检测 | URL/title 指纹重复 | 去重 |
+| 时效过滤 | 发布日期 > 5 年（可配置） | 技术类内容过时风险高 |
+
+#### 策略二：二阶段分析（Two-Stage Analysis）
+
+**问题**：LLM 分析成本高，但不是所有资源都需要深度分析
+
+**方案**：第一阶段规则评分，第二阶段仅高分资源进入 LLM
+
+```
+候选资源 (30)
+      │
+      ▼
+┌──────────────┐
+│ 第一阶段      │  ← 规则评分（零 LLM 成本）
+│ 规则评分      │
+│ (Evaluator)  │
+└──────┬───────┘
+       │
+  ┌────┴────┐
+  ▼         ▼
+低分 (15)   高分 (15)
+score < 6   score >= 6
+  │         │
+  ▼         ▼
+快速处理    ┌──────────────┐
+(仅元数据)  │ 第二阶段      │  ← LLM 深度分析（仅 15 次）
+            │ 知识提取      │
+            │ (Analyzer)    │
+            └──────────────┘
+```
+
+**第一阶段规则评分维度**：
+
+| 维度 | 规则 | 权重 |
+|------|------|------|
+| 来源权威性 | GitHub stars / 论文引用数 / 平台可信度 | 30% |
+| 内容丰富度 | 正文长度 / 代码块数 / 图片数 | 25% |
+| 时效性 | 发布日期距今 | 20% |
+| 社区认可 | 点赞 / 评论 / 分享数 | 15% |
+| 结构质量 | 有标题/有目录/有代码示例 | 10% |
+
+#### 策略三：模型分层（Model Tiering）
+
+**原则**：复杂任务用 Pro 模型，简单任务用 Lite 模型
+
+| 任务 | 模型 | 理由 | Token 成本 |
+|------|------|------|-----------|
+| Supervisor 决策 | mimo-v2.5-pro | 需要全局推理 | 高 |
+| Planner 规划 | mimo-v2.5-pro | 需要深度思考 | 高 |
+| Analyzer 知识提取 | mimo-v2.5 | 需要理解能力 | 中 |
+| Analyzer 标注/摘要 | mimo-7b | 简单任务 | 低 |
+| Tool Router | mimo-v2.5 | 需要推理选择 | 中 |
+| Reflector 反思 | mimo-v2.5-pro | 需要策略推理 | 高 |
+| Evaluator | 规则引擎 | 零 LLM 成本 | 零 |
+| Builder | mimo-7b + 模板 | 渲染为主 | 低 |
+
+**成本对比（50 个资源的完整流程）**：
+
+| 方案 | LLM 调用次数 | 模型 | 估算成本 |
+|------|-------------|------|---------|
+| 全部用 mimo-v2.5-pro | ~200 次 | pro | $$$$ |
+| 模型分层 + 二阶段分析 | ~80 次 | mixed | $$ |
+| 模型分层 + 二阶段 + 规则预筛 | ~50 次 | mixed | $ |
+
+#### 策略四：缓存与去重
+
+| 缓存层 | 实现 | 节省 |
+|--------|------|------|
+| **LLM 结果缓存** | LangChain Cache (SQLite) | 相同 prompt 不重复调用 |
+| **URL 去重** | content_hash 指纹 | 已分析的 URL 不重复分析 |
+| **知识去重** | 概念名匹配 | 已提取的概念不重复提取 |
+| **搜索去重** | query + source 去重 | 相同搜索词不重复搜索 |
 
 > Agent 自身的开发节奏控制——如何分阶段推进、如何管理上下文生命周期。
 
@@ -1151,19 +1297,44 @@ CREATE TABLE updates (
 # openlearning.yaml — 用户配置
 version: "1.0"
 
-# LLM 配置 (LangChain)
+# LLM 配置 — 小米 MiMo
 llm:
-  provider: openai          # openai / anthropic / ollama(本地)
-  model: gpt-4o-mini        # 默认模型（分析用）
-  premium_model: gpt-4o     # 高级模型（规划用）
-  api_key: ${OPENAI_API_KEY}
-  base_url: null            # 自定义 endpoint
+  provider: mimo            # 小米 MiMo 大模型
+  api_key: ${MIMO_API_KEY}
+  base_url: ${MIMO_BASE_URL}  # OpenAI 兼容接口 (vLLM / 小米云)
+
+  # 模型分层 — 不同任务使用不同模型，优化成本
+  models:
+    # 复杂推理：Supervisor / Planner / Reflector
+    pro: "mimo-v2.5-pro"
+    # 中等任务：Analyzer 知识提取 / Tool Router
+    standard: "mimo-v2.5"
+    # 简单任务：摘要 / 标注 / 格式化
+    lite: "mimo-7b"
+
+  # 任务→模型映射
+  routing:
+    supervisor: pro           # 需要全局推理
+    planner: pro              # 需要深度思考
+    collector: lite           # 纯工具调用，不需要 LLM
+    analyzer_extract: standard # 知识提取需要理解能力
+    analyzer_tag: lite         # 标注是简单任务
+    analyzer_summarize: lite   # 摘要是简单任务
+    evaluator: lite            # 规则引擎为主，LLM 仅辅助
+    tool_router: standard      # 工具选择需要推理
+    reflector: pro             # 策略反思需要深度推理
+    builder: lite              # 模板渲染为主
+
   max_tokens: 4096
   temperature: 0.3
-  # LangChain 特定配置
-  cache: true               # 启用 LangChain LLM 缓存，避免重复调用
-  retry_max: 3              # LangChain 内置重试次数
-  verbose: false            # 调试模式下打印链的执行细节
+  cache: true
+  retry_max: 3
+
+  # 成本估算 (每 1M tokens)
+  cost:
+    mimo-v2.5-pro: 15.0    # $
+    mimo-v2.5: 5.0
+    mimo-7b: 0.5
 
 # Skill 配置
 skills:
@@ -1242,6 +1413,7 @@ langsmith:
 | **数据库** | SQLite (via aiosqlite) | 零配置，单文件部署 |
 | **ORM** | SQLModel (Pydantic + SQLAlchemy) | 类型安全 + 序列化 |
 | **爬虫** | httpx + BeautifulSoup4 / trafilatura | 内容提取 |
+| **LLM** | 小米 MiMo (mimo-v2.5-pro / mimo-v2.5 / mimo-7b) | 模型分层，Pro 做推理，Lite 做简单任务 |
 | **LLM 框架** | LangChain + LangGraph | StateGraph 多 Agent 编排、Subgraph 子图、Tool 绑定、条件路由 |
 | **Skill 框架** | LangChain Tools + 自定义 BaseSkill | 工具抽象、自动路由、上下文隔离 |
 | **上下文管理** | tiktoken + 自定义压缩器 | token 计数、三级压缩、滑动窗口 |
@@ -1264,7 +1436,7 @@ langsmith:
 
 | API | 用途 | 是否必需 |
 |-----|------|----------|
-| OpenAI / Anthropic | LLM 分析与规划 | 是 (或用 Ollama 本地替代) |
+| 小米 MiMo API | LLM 分析与规划 (OpenAI 兼容接口) | 是 |
 | LangSmith | 链路追踪、质量评估、成本监控 | 推荐 (有免费额度，可离线运行) |
 | SerpAPI / SearchAPI | Google 搜索结果 | 推荐 (有免费额度) |
 | YouTube Data API | 视频搜索 | 可选 |
@@ -1325,7 +1497,7 @@ openlearning eval run <dataset>                    # 运行评估数据集
 openlearning eval results                          # 查看最近评估结果
 
 # 配置
-openlearning config set llm.model gpt-4o     # 修改配置
+openlearning config set llm.models.pro mimo-v2.5-pro  # 修改配置
 openlearning config show                      # 查看当前配置
 ```
 
@@ -1611,6 +1783,8 @@ freshness_multiplier:
 | 数据库查询 | < 100ms |
 | 生成站点首屏加载 | < 1 秒 |
 | 搜索响应 (客户端) | < 200ms |
+| **单次完整流程 LLM 成本** | **< $0.50** (50 个资源，模型分层+二阶段) |
+| LLM 调用次数 (50 资源) | < 60 次 (规则预筛后) |
 
 ---
 
