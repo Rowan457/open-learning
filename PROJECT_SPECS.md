@@ -113,12 +113,12 @@ START
        │
        ▼
 ┌─────────────┐
-│   Planner   │  ← 分析需求，生成知识图谱 + 采集计划
+│   Planner   │  ← 首次：完整规划 / 后续：根据 Reflector 反馈重新规划
 └──────┬──────┘
        │
        ▼
 ┌─────────────┐
-│  Collector  │  ← 按计划并行采集（可多轮）
+│  Collector  │  ← 纯执行：按 Planner 的 search_queries 并行采集
 └──────┬──────┘
        │
        ▼
@@ -128,22 +128,38 @@ START
        │
        ▼
 ┌─────────────┐
-│ Evaluation  │  ← 规则引擎：质量/覆盖/多样性检查
-│  Engine     │     不达标 → 返回 Collector 补充
-└──────┬──────┘
-       │ (通过)
-       ▼
-┌─────────────┐
-│  Reflector  │  ← LLM 反思：策略调整、深度优化建议
+│ Evaluation  │  ← 规则引擎：质量/覆盖/多样性/时效检查
+│  Engine     │     输出评估数据，不做路由决策
 └──────┬──────┘
        │
        ▼
 ┌─────────────┐
-│   Builder   │  ← 生成知识图谱学习系统（非资源列表）
+│  Reflector  │  ← 唯一决策者，输出三个决策：
+│             │    1. 是否继续搜索 (should_continue)
+│             │    2. 缺什么资源 (missing_concepts)
+│             │    3. 需要什么类型资源 (missing_types)
 └──────┬──────┘
        │
-       ▼
-      END
+       ├──── should_continue=true ────┐
+       │                              │
+       │                              ▼
+       │                        ┌───────────┐
+       │                        │  Planner  │  ← 根据 missing_concepts/missing_types
+       │                        │ (重新规划) │     生成定向搜索词
+       │                        └─────┬─────┘
+       │                              │
+       │                              ▼
+       │                        Collector → ...
+       │
+       ├──── should_continue=false ───┐
+       │                              │
+       ▼                              │
+┌─────────────┐                       │
+│   Builder   │  ← 生成知识图谱学习系统 │
+└──────┬──────┘                       │
+       │                              │
+       ▼                              │
+      END                             │
 ```
 
 
@@ -241,32 +257,64 @@ class AgentState(TypedDict):
 
 ### 4.1 Planner Agent（学习规划子图）
 
-**职责**：将用户的自然语言学习需求，拆解为结构化的知识树和采集计划。
+**职责**：将用户的自然语言学习需求，拆解为结构化的知识树和采集计划。**被 Reflector 调回时，根据 `missing_concepts` 和 `missing_types` 生成定向搜索词。**
 
 ```python
-class PlannerState(TypedDict):
-    user_request: str
-    user_profile: dict
-    knowledge_tree: dict         # 知识树
-    search_queries: list[str]    # 搜索关键词矩阵
-    crawl_plan: list[dict]       # 采集任务列表
-
 def planner_agent(state: AgentState) -> dict:
-    """Planner 子图：需求分析 → 知识树展开 → 搜索词生成"""
+    """Planner 子图：首次完整规划 / 被 Reflector 调回时重新规划"""
+    reflection = state.get("reflection", {})
+    existing_graph = state.get("knowledge_graph", {})
+
     # 1. LLM 分析用户需求
     analysis = llm.analyze(state["user_request"], state["user_profile"])
 
-    # 2. 展开知识树
-    tree = llm.expand_knowledge_tree(analysis["topic"], analysis["subtopics"])
+    # 2. 展开知识树（复用已有图谱）
+    tree = existing_graph if existing_graph.get("nodes") else llm.expand_knowledge_tree(...)
 
-    # 3. 生成搜索关键词矩阵
-    queries = generate_search_queries(tree, analysis["resource_types"])
+    # 3. 生成搜索词
+    if reflection and reflection.get("should_continue"):
+        # 被 Reflector 调回：根据反馈生成定向搜索词
+        queries = replan_from_reflection(reflection, analysis)
+    else:
+        # 首次规划：完整搜索矩阵
+        queries = generate_search_queries(tree, analysis["resource_types"])
 
     return {
-        "learning_plan": {"tree": tree, "crawl_plan": queries},
+        "knowledge_graph": tree,
         "search_queries": queries,
+        "learning_plan": {"analysis": analysis, "tree": tree},
         "current_agent": "planner",
     }
+
+
+def replan_from_reflection(reflection: dict, analysis: dict) -> list[str]:
+    """根据 Reflector 反馈重新生成搜索词"""
+    queries = []
+    topic = analysis["topic"]
+
+    # 缺什么资源 → 针对性搜索
+    for concept in reflection["missing_concepts"][:5]:
+        queries.append(f"{concept} tutorial")
+        queries.append(f"{concept} 教程")
+
+    # 需要什么类型 → 定向数据源
+    for rtype in reflection["missing_types"]:
+        if rtype == "video":
+            queries.append(f"{topic} video tutorial youtube")
+        elif rtype == "paper":
+            queries.append(f"{topic} survey paper arxiv")
+        elif rtype == "repo":
+            queries.append(f"{topic} github examples")
+        elif rtype == "article":
+            queries.append(f"{topic} comprehensive guide blog")
+
+    # 质量/时效问题 → 优化关键词
+    if reflection.get("quality_issue"):
+        queries.append(f"{topic} official documentation")
+    if reflection.get("freshness_issue"):
+        queries.append(f"{topic} 2025 2026 latest")
+
+    return queries
 ```
 
 **输出写入状态**：`learning_plan`, `search_queries`
@@ -278,7 +326,7 @@ def planner_agent(state: AgentState) -> dict:
 
 ### 4.2 Collector Agent（资源采集子图）
 
-**职责**：根据 Planner 生成的搜索关键词，并行调用多个数据源采集原始资源。
+**职责**：**纯执行者**——根据 Planner 生成的搜索关键词，并行调用多个数据源采集原始资源。不做任何路由决策，不读取 Reflector 输出。
 
 ```python
 # Skills 通过 LangChain Tool 注入，每个 Skill 模块导出一组 tools
@@ -686,7 +734,7 @@ def schedule_review(concept_id: str, mastery: float, stability: float) -> dict:
 
 ### 4.5 Evaluation Engine（规则引擎）
 
-**职责**：用**规则**（非 LLM）做质量检查、覆盖度检查、多样性检查。同时作为二阶段分析的**第一阶段预筛器**，淘汰低质量资源，减少 LLM 调用次数。成本低、速度快、可解释。
+**职责**：用**规则**（非 LLM）做质量检查、覆盖度检查、多样性检查、时效检查。**只输出评估数据，不做路由决策**——路由由 Reflector 负责。同时作为二阶段分析的**第一阶段预筛器**，淘汰低质量资源，减少 LLM 调用次数。
 
 ```python
 def evaluator_engine(state: AgentState) -> dict:
@@ -780,45 +828,76 @@ def tool_router_agent(state: AgentState) -> dict:
 
 ### 4.7 Reflector Agent（策略反思子图）
 
-**职责**：基于 Evaluation Engine 的结果，用 LLM 进行**策略层面的反思**——不是重复规则检查，而是思考"为什么不够好"和"应该怎么调整"。
+**职责**：基于 Evaluation Engine 的结果，输出三个决策。Reflector 是**唯一的路由决策者**，Evaluator 只提供评估数据。
+
+#### 三个核心职责
+
+| 职责 | 输出字段 | 说明 |
+|------|----------|------|
+| **是否继续搜索** | `should_continue` | 综合判断：评估结果 + 迭代预算 + 是否有可执行调整 |
+| **缺什么资源** | `missing_concepts` | 从覆盖率分析中提取未覆盖的知识节点 |
+| **需要什么类型资源** | `missing_types` | 对比已有类型 vs {article, video, paper, repo} |
 
 ```python
 def reflector_agent(state: AgentState) -> dict:
-    """Reflector 子图：LLM 策略反思（非规则检查）"""
+    """Reflector：评估结果分析 → 三个决策输出"""
     evaluation = state["evaluation"]
     graph = state["knowledge_graph"]
-    memory = state.get("user_memory", {})
+    iteration = state["iteration"]
+    max_iterations = state["max_iterations"]
 
-    # LLM 反思：基于评估结果，生成策略调整建议
-    reflection = await llm.reflect(
+    # 1. 缺什么资源
+    missing_concepts = find_missing_concepts(evaluation["coverage"], graph)
+
+    # 2. 需要什么类型资源
+    missing_types = find_missing_types(evaluation["diversity"])
+
+    # 3. 是否继续搜索
+    should_continue, reason = should_continue_search(
         evaluation=evaluation,
-        knowledge_graph=graph,
-        user_memory=memory,
-        prompt="""分析评估结果，回答：
-        1. 哪些知识节点资源不足？为什么？（搜索词不够精准？源选择不对？）
-        2. 质量低的资源有什么共同特征？如何避免？
-        3. 用户已有哪些知识？应该跳过什么、深入什么？
-        4. 下一轮采集应该调整什么策略？
-        """,
+        iteration=iteration,
+        max_iterations=max_iterations,
+        missing_concepts=missing_concepts,
+        missing_types=missing_types,
     )
 
     return {
-        "reflection": reflection,
+        "reflection": {
+            "should_continue": should_continue,    # bool
+            "missing_concepts": missing_concepts,  # list[str]
+            "missing_types": missing_types,        # list[str]
+            "reason": reason,                      # str
+            "quality_issue": not evaluation["quality"]["pass"],
+            "freshness_issue": not evaluation["freshness"]["pass"],
+        },
         "current_agent": "reflector",
     }
 ```
 
-**输出写入状态**：`reflection`
+#### 路由逻辑
+
+```
+Reflector.should_continue = true  → 回到 Planner（重新规划）
+Reflector.should_continue = false → 进入 Builder（构建学习系统）
+```
+
+**判断 should_continue 的条件**：
+1. 评估全部通过 → `false`
+2. 迭代预算耗尽（`iteration >= max_iterations`）→ `false`
+3. 有未覆盖的知识节点 → `true`
+4. 缺少资源类型 → `true`
+5. 质量/时效不达标 → `true`（换关键词重搜）
+6. 以上均不满足 → `false`
 
 #### Reflector vs Evaluation Engine
 
 | 维度 | Evaluation Engine | Reflector |
 |------|------------------|-----------|
-| **方法** | 规则引擎（if/else） | LLM 推理 |
-| **成本** | 零 token 消耗 | 消耗 token |
-| **速度** | 毫秒级 | 秒级 |
-| **能力** | 质量/覆盖/多样性/时效 | 策略调整/根因分析/个性化建议 |
-| **输出** | pass/fail + 数值 | 文字建议 + 调整方案 |
+| **方法** | 规则引擎（if/else） | 规则/LLM 推理 |
+| **成本** | 零 token 消耗 | 低/中 |
+| **速度** | 毫秒级 | 毫秒级/秒级 |
+| **职责** | 输出评估数据 | **路由决策** |
+| **输出** | pass/fail + 数值 | should_continue + missing_concepts + missing_types |
 
 ---
 
