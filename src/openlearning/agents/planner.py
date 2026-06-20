@@ -14,21 +14,34 @@ from openlearning.agents.state import AgentState
 async def planner_agent(state: AgentState) -> dict[str, Any]:
     """Planner subgraph: analyze request → expand knowledge tree → generate search queries.
 
-    Reads: user_request, user_profile, user_memory
+    首次调用：完整规划
+    被 Reflector 调回：根据 missing_concepts + missing_types 调整搜索计划
+
+    Reads: user_request, user_profile, user_memory, reflection
     Writes: knowledge_graph, search_queries, learning_plan
     """
     user_request = state.get("user_request", "")
     user_profile = state.get("user_profile", {})
     user_memory = state.get("user_memory", {})
+    reflection = state.get("reflection", {})
+    existing_graph = state.get("knowledge_graph", {})
 
     # 1. Analyze user request
     analysis = _analyze_request(user_request, user_profile)
 
-    # 2. Expand knowledge tree
-    knowledge_graph = _expand_knowledge_graph(analysis)
+    # 2. Expand knowledge tree (复用已有图谱，避免重复构建)
+    if existing_graph and existing_graph.get("nodes"):
+        knowledge_graph = existing_graph
+    else:
+        knowledge_graph = _expand_knowledge_graph(analysis)
 
     # 3. Generate search queries
-    search_queries = _generate_search_queries(knowledge_graph, analysis, user_profile)
+    if reflection and reflection.get("should_continue"):
+        # Reflector 驱动的重新规划：针对性搜索
+        search_queries = _replan_from_reflection(reflection, analysis)
+    else:
+        # 首次规划
+        search_queries = _generate_search_queries(knowledge_graph, analysis, user_profile)
 
     # 4. Build crawl plan
     crawl_plan = _build_crawl_plan(search_queries, analysis)
@@ -43,6 +56,44 @@ async def planner_agent(state: AgentState) -> dict[str, Any]:
         },
         "current_agent": "planner",
     }
+
+
+def _replan_from_reflection(reflection: dict, analysis: dict) -> list[str]:
+    """根据 Reflector 的反馈重新生成搜索词。
+
+    Reflector 输出:
+    - missing_concepts: 缺什么资源
+    - missing_types: 需要什么类型
+    """
+    queries = []
+    topic = analysis.get("topic", "")
+
+    # 缺什么资源 → 针对性搜索
+    for concept in reflection.get("missing_concepts", [])[:5]:
+        queries.append(f"{concept} tutorial")
+        queries.append(f"{concept} 教程")
+
+    # 需要什么类型 → 定向数据源
+    for rtype in reflection.get("missing_types", []):
+        if rtype == "video":
+            queries.append(f"{topic} video tutorial youtube")
+        elif rtype == "paper":
+            queries.append(f"{topic} survey paper arxiv")
+        elif rtype == "repo":
+            queries.append(f"{topic} github examples")
+        elif rtype == "article":
+            queries.append(f"{topic} comprehensive guide blog")
+
+    # 质量问题 → 提升搜索精度
+    if reflection.get("quality_issue"):
+        queries.append(f"{topic} official documentation")
+        queries.append(f"{topic} best practices权威教程")
+
+    # 时效性问题 → 加时间限定
+    if reflection.get("freshness_issue"):
+        queries.append(f"{topic} 2025 2026 latest")
+
+    return queries
 
 
 def _analyze_request(request: str, profile: dict) -> dict:

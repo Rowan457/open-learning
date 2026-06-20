@@ -27,9 +27,9 @@ def build_graph() -> StateGraph:
         START → memory → planner → collector → analyzer → evaluator → reflector
                           ↑                                              │
                           │         ┌────────────────────────────────────┘
-                          │         │ (should_continue && iteration < max)
+                          │         │ should_continue
                           │         ▼
-                          └──── collector
+                          └──── planner (re-plan)
                                      │
                                      └──→ builder → END
     """
@@ -54,12 +54,12 @@ def build_graph() -> StateGraph:
     graph.add_edge("analyzer", "evaluator")
     graph.add_edge("evaluator", "reflector")
 
-    # Reflector decides: retry collection or build
+    # Reflector decides: re-plan or build
     graph.add_conditional_edges(
         "reflector",
         _reflector_routing,
         {
-            "collector": "collector",
+            "planner": "planner",
             "builder": "builder",
         },
     )
@@ -70,15 +70,14 @@ def build_graph() -> StateGraph:
     return graph
 
 
-def _reflector_routing(state: AgentState) -> Literal["collector", "builder"]:
-    """Route after reflection: Reflector decides whether to retry or build."""
+def _reflector_routing(state: AgentState) -> Literal["planner", "builder"]:
+    """Reflector decides: back to Planner for re-plan, or to Builder."""
     reflection = state.get("reflection", {})
     iteration = state.get("iteration", 0)
     max_iterations = state.get("max_iterations", 3)
 
-    # Reflector decides: continue collecting or proceed to build
     if reflection.get("should_continue", False) and iteration < max_iterations:
-        return "collector"
+        return "planner"
 
     return "builder"
 
