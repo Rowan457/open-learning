@@ -1,0 +1,7 @@
+{
+  "dependencies": ["./src/openlearning"],
+  "graphs": {
+    "openlearning": "./src/openlearning/agents/graph.py:compile_graph"
+  },
+  "env": ".env"
+}
