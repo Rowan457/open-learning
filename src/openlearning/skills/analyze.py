@@ -439,9 +439,313 @@ async def compare(resource_a: dict, resource_b: dict) -> dict[str, Any]:
     }
 
 
+# ── LLM Deep Analysis (Phase 2) ─────────────────────────────
+
+class LLMSummarizeInput(BaseModel):
+    content: str = Field(description="要摘要的内容")
+    lang: str = Field(default="zh", description="输出语言: zh / en")
+    max_length: int = Field(default=300, description="摘要最大长度")
+
+
+class LLMExtractInput(BaseModel):
+    content: str = Field(description="要提取知识的内容")
+    existing_concepts: list[str] = Field(default_factory=list, description="已有概念（避免重复）")
+
+
+class LLMDifficultyInput(BaseModel):
+    content: str = Field(description="要判断难度的内容")
+    title: str = Field(default="", description="资源标题")
+
+
+class MultiDimScoreInput(BaseModel):
+    content: str = Field(description="要评分的内容")
+    metadata: dict = Field(default_factory=dict, description="资源元数据")
+
+
+class DetectDuplicatesInput(BaseModel):
+    resources: list[dict] = Field(description="资源列表")
+    threshold: float = Field(default=0.8, description="相似度阈值 0-1")
+
+
+@tool("llm_summarize", args_schema=LLMSummarizeInput)
+async def llm_summarize(content: str, lang: str = "zh", max_length: int = 300) -> dict[str, Any]:
+    """LLM 智能摘要：提取核心观点和关键信息。
+
+    返回 {summary, key_points, one_line_summary}。
+    """
+    from openlearning.llm import achat_json
+
+    prompt = f"""请对以下内容生成结构化摘要。
+
+要求：
+1. 一句话摘要（{max_length} 字以内）
+2. 3-5 个关键要点
+3. 输出语言：{'中文' if lang == 'zh' else 'English'}
+
+内容：
+{content[:4000]}
+
+请以 JSON 格式输出：
+{{
+  "summary": "完整摘要",
+  "one_line_summary": "一句话摘要",
+  "key_points": ["要点1", "要点2", "要点3"]
+}}"""
+
+    try:
+        result = await achat_json(
+            messages=[{"role": "user", "content": prompt}],
+            tier="lite",
+            temperature=0.2,
+        )
+        return result
+    except Exception:
+        # Fallback to rule-based
+        return await summarize.ainvoke({"content": content, "lang": lang})
+
+
+@tool("llm_extract_knowledge", args_schema=LLMExtractInput)
+async def llm_extract_knowledge(
+    content: str,
+    existing_concepts: list[str] | None = None,
+) -> dict[str, Any]:
+    """LLM 知识提取：从内容中提取概念、定义、技术、最佳实践。
+
+    返回 {concepts: [{name, type, definition, difficulty, importance}]}。
+    """
+    from openlearning.llm import achat_json
+
+    existing = existing_concepts or []
+    existing_str = ", ".join(existing[:20]) if existing else "无"
+
+    prompt = f"""从以下内容中提取知识概念。
+
+已有概念（避免重复）：{existing_str}
+
+内容：
+{content[:4000]}
+
+请提取所有有价值的概念，以 JSON 格式输出：
+{{
+  "concepts": [
+    {{
+      "name": "概念名称",
+      "type": "concept/principle/technology/practice",
+      "definition": "简明定义",
+      "difficulty": "beginner/intermediate/advanced",
+      "importance": 0.0-1.0
+    }}
+  ]
+}}"""
+
+    try:
+        result = await achat_json(
+            messages=[{"role": "user", "content": prompt}],
+            tier="standard",
+            temperature=0.1,
+        )
+        return result
+    except Exception:
+        # Fallback to rule-based
+        return await extract_knowledge.ainvoke({
+            "content": content,
+            "existing_concepts": existing_concepts or [],
+        })
+
+
+@tool("llm_tag", args_schema=LLMDifficultyInput)
+async def llm_tag(content: str, title: str = "") -> dict[str, Any]:
+    """LLM 难度标注：智能判断内容难度和适合的学习阶段。
+
+    返回 {difficulty, prerequisites, learning_stage, topics}。
+    """
+    from openlearning.llm import achat_json
+
+    prompt = f"""分析以下学习资源的难度和适合的学习阶段。
+
+标题：{title}
+内容：
+{content[:3000]}
+
+请以 JSON 格式输出：
+{{
+  "difficulty": "beginner/intermediate/advanced",
+  "prerequisites": ["前置知识1", "前置知识2"],
+  "learning_stage": "入门/进阶/深入",
+  "topics": ["主题1", "主题2", "主题3"],
+  "reasoning": "判断理由"
+}}"""
+
+    try:
+        result = await achat_json(
+            messages=[{"role": "user", "content": prompt}],
+            tier="lite",
+            temperature=0.1,
+        )
+        return result
+    except Exception:
+        # Fallback to rule-based
+        return await tag.ainvoke({"content": content})
+
+
+@tool("multi_dim_score", args_schema=MultiDimScoreInput)
+async def multi_dim_score(content: str, metadata: dict | None = None) -> dict[str, Any]:
+    """多维度质量评分：规则 + LLM 混合评分。
+
+    规则维度（零成本）：authority, freshness, structure
+    LLM 维度：content_depth, teaching_quality, practicality
+
+    返回 {scores: {dim: score}, final_score, reasoning}。
+    """
+    from openlearning.llm import achat_json
+
+    meta = metadata or {}
+
+    # Rule-based dimensions (zero cost)
+    rule_scores = _rule_score(content, meta)
+
+    # LLM dimensions
+    prompt = f"""评估以下学习资源的质量（每项 0-10 分）。
+
+内容：
+{content[:3000]}
+
+请以 JSON 格式输出评分：
+{{
+  "content_depth": {{"score": 0-10, "reason": "理由"}},
+  "teaching_quality": {{"score": 0-10, "reason": "理由"}},
+  "practicality": {{"score": 0-10, "reason": "理由"}}
+}}
+
+评分标准：
+- content_depth: 内容深度，是否深入讲解而非浅尝辄止
+- teaching_quality: 教学质量，是否有清晰结构、示例、练习
+- practicality: 实操性，是否有可运行代码、动手练习"""
+
+    try:
+        llm_result = await achat_json(
+            messages=[{"role": "user", "content": prompt}],
+            tier="standard",
+            temperature=0.2,
+        )
+
+        # Merge rule + LLM scores
+        all_scores = {
+            "authority": rule_scores["scores"]["authority"],
+            "richness": rule_scores["scores"]["richness"],
+            "freshness": rule_scores["scores"]["freshness"],
+            "community": rule_scores["scores"]["community"],
+            "structure": rule_scores["scores"]["structure"],
+            "content_depth": llm_result.get("content_depth", {}).get("score", 5.0),
+            "teaching_quality": llm_result.get("teaching_quality", {}).get("score", 5.0),
+            "practicality": llm_result.get("practicality", {}).get("score", 5.0),
+        }
+
+        # Weighted average
+        weights = {
+            "authority": 0.15,
+            "richness": 0.10,
+            "freshness": 0.10,
+            "community": 0.05,
+            "structure": 0.10,
+            "content_depth": 0.25,
+            "teaching_quality": 0.15,
+            "practicality": 0.10,
+        }
+        final_score = sum(all_scores[dim] * w for dim, w in weights.items())
+
+        return {
+            "scores": all_scores,
+            "final_score": round(final_score, 2),
+            "method": "hybrid",
+            "llm_reasoning": llm_result,
+        }
+
+    except Exception:
+        # Fallback to rule-only
+        return {
+            "scores": rule_scores["scores"],
+            "final_score": rule_scores["final_score"],
+            "method": "rule_only",
+            "reasoning": rule_scores["reasoning"],
+        }
+
+
+@tool("detect_duplicates", args_schema=DetectDuplicatesInput)
+async def detect_duplicates(resources: list[dict], threshold: float = 0.8) -> dict[str, Any]:
+    """去重 & 相似度检测：基于标题和内容指纹识别重复资源。
+
+    返回 {unique: [...], duplicates: [...], stats: {...}}。
+    """
+    import hashlib
+    from difflib import SequenceMatcher
+
+    unique = []
+    duplicates = []
+    seen_hashes: dict[str, int] = {}  # hash → index in unique
+    seen_titles: list[tuple[str, int]] = []  # (normalized_title, index)
+
+    for r in resources:
+        url = r.get("url", "")
+        title = r.get("title", "").strip().lower()
+        snippet = r.get("snippet", "")
+
+        # Hash-based dedup (exact content match)
+        content_hash = hashlib.md5(f"{title}|{snippet[:200]}".encode()).hexdigest()
+        if content_hash in seen_hashes:
+            duplicates.append({
+                "resource": r,
+                "reason": "exact_content_match",
+                "duplicate_of": unique[seen_hashes[content_hash]].get("url", ""),
+            })
+            continue
+
+        # URL-based dedup
+        url_normalized = url.rstrip("/").split("?")[0].split("#")[0].lower()
+        if any(u == url_normalized for u, _ in seen_titles):
+            duplicates.append({
+                "resource": r,
+                "reason": "duplicate_url",
+            })
+            continue
+
+        # Title similarity dedup
+        is_similar = False
+        for seen_title, idx in seen_titles:
+            similarity = SequenceMatcher(None, title, seen_title).ratio()
+            if similarity >= threshold:
+                duplicates.append({
+                    "resource": r,
+                    "reason": "similar_title",
+                    "similarity": round(similarity, 2),
+                    "duplicate_of": unique[idx].get("url", ""),
+                })
+                is_similar = True
+                break
+
+        if not is_similar:
+            seen_hashes[content_hash] = len(unique)
+            seen_titles.append((title, len(unique)))
+            unique.append(r)
+
+    return {
+        "unique": unique,
+        "duplicates": duplicates,
+        "stats": {
+            "total": len(resources),
+            "unique": len(unique),
+            "duplicates": len(duplicates),
+            "dedup_rate": round(len(duplicates) / max(len(resources), 1), 2),
+        },
+    }
+
+
 # ── Tools Export ─────────────────────────────────────────────
 
-TOOLS = [score, summarize, tag, extract_knowledge, discover_relations, compare]
+TOOLS = [
+    score, summarize, tag, extract_knowledge, discover_relations, compare,
+    llm_summarize, llm_extract_knowledge, llm_tag, multi_dim_score, detect_duplicates,
+]
 
 
 def get_tools() -> list:
