@@ -11,18 +11,22 @@ from openlearning.agents.state import AgentState
 
 
 async def reflector_agent(state: AgentState) -> dict[str, Any]:
-    """Reflector subgraph: analyze evaluation → strategy adjustment suggestions.
+    """Reflector subgraph: analyze evaluation → decide next action.
 
-    Reads: evaluation, knowledge_graph, user_memory
-    Writes: reflection
+    Reflector is the sole decision maker after evaluation.
+    It reads evaluation results and decides: retry collection or proceed to build.
+
+    Reads: evaluation, knowledge_graph, user_memory, iteration, max_iterations
+    Writes: reflection (including should_continue)
     """
     evaluation = state.get("evaluation", {})
     graph = state.get("knowledge_graph", {})
     memory = state.get("user_memory", {})
     iteration = state.get("iteration", 0)
+    max_iterations = state.get("max_iterations", 3)
 
-    # Rule-based reflection (no LLM cost)
-    reflection = _rule_based_reflection(evaluation, graph, memory, iteration)
+    # Reflector decides based on evaluation + iteration budget
+    reflection = _rule_based_reflection(evaluation, graph, memory, iteration, max_iterations)
 
     return {
         "reflection": reflection,
@@ -35,8 +39,15 @@ def _rule_based_reflection(
     graph: dict,
     memory: dict,
     iteration: int,
+    max_iterations: int = 3,
 ) -> dict:
-    """Generate strategy adjustment suggestions based on evaluation results."""
+    """Reflector decides: analyze evaluation results and determine next action.
+
+    The Reflector is the sole decision maker. It considers:
+    - Evaluation results (quality, coverage, diversity, freshness)
+    - Remaining iteration budget
+    - Whether further collection would actually help
+    """
     suggestions = []
     search_adjustments = []
     priority_adjustments = []
@@ -45,8 +56,31 @@ def _rule_based_reflection(
     coverage = evaluation.get("coverage", {})
     diversity = evaluation.get("diversity", {})
     freshness = evaluation.get("freshness", {})
+    all_passed = evaluation.get("pass", False)
 
-    # Quality issues
+    # If all checks passed, no need to continue
+    if all_passed:
+        return {
+            "suggestions": ["所有评估指标均已达标"],
+            "search_adjustments": [],
+            "priority_adjustments": [],
+            "should_continue": False,
+            "reason": "all_passed",
+            "iteration": iteration,
+        }
+
+    # Budget exhausted — accept current results
+    if iteration >= max_iterations:
+        return {
+            "suggestions": [f"已达到最大迭代次数 ({max_iterations})，接受当前结果"],
+            "search_adjustments": [],
+            "priority_adjustments": [],
+            "should_continue": False,
+            "reason": "max_iterations_reached",
+            "iteration": iteration,
+        }
+
+    # Analyze what's failing and suggest adjustments
     if not quality.get("pass", True):
         avg = quality.get("avg", 0)
         if avg < 4.0:
@@ -56,7 +90,6 @@ def _rule_based_reflection(
             suggestions.append("资源质量略低，建议增加权威来源的权重")
             search_adjustments.append("add 'official' OR 'documentation' to queries")
 
-    # Coverage issues
     if not coverage.get("pass", True):
         uncovered = coverage.get("uncovered", [])
         if uncovered:
@@ -64,7 +97,6 @@ def _rule_based_reflection(
             for concept in uncovered[:3]:
                 search_adjustments.append(f"search specifically for: {concept}")
 
-    # Diversity issues
     if not diversity.get("pass", True):
         current_types = diversity.get("types", [])
         missing = []
@@ -81,24 +113,22 @@ def _rule_based_reflection(
                 elif t == "repo":
                     search_adjustments.append("add github search")
 
-    # Freshness issues
     if not freshness.get("pass", True):
         suggestions.append("资源时效性不足，建议增加时间限定搜索")
         search_adjustments.append("add '2025 OR 2026' to queries")
-
-    # Iteration-based adjustments
-    if iteration >= 2:
-        suggestions.append("已进行多轮采集，建议降低质量阈值或接受当前结果")
-        priority_adjustments.append("lower quality threshold to 5.0")
 
     # Memory-based adjustments
     if similar := memory.get("similar_project"):
         suggestions.append(f"发现类似历史项目 '{similar.get('title', '')}'，可参考其资源")
 
+    # Reflector's decision: continue only if there are actionable suggestions
+    should_continue = len(search_adjustments) > 0
+
     return {
         "suggestions": suggestions,
         "search_adjustments": search_adjustments,
         "priority_adjustments": priority_adjustments,
-        "should_continue": iteration < 3 and len(suggestions) > 0,
+        "should_continue": should_continue,
+        "reason": "has_adjustments" if should_continue else "no_actionable_fixes",
         "iteration": iteration,
     }

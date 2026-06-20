@@ -24,16 +24,14 @@ def build_graph() -> StateGraph:
     """Build the main agent graph with all sub-agents.
 
     Flow:
-        START → memory → planner → collector → analyzer → evaluator
-                          ↑                                    │
-                          │         ┌──────────────────────────┘
+        START → memory → planner → collector → analyzer → evaluator → reflector
+                          ↑                                              │
+                          │         ┌────────────────────────────────────┘
+                          │         │ (should_continue && iteration < max)
                           │         ▼
-                          │    (pass?)──yes──→ builder → END
-                          │         │
-                          │        no
-                          │         │
-                          │         ▼
-                          └── reflector (strategy adjustment)
+                          └──── collector
+                                     │
+                                     └──→ builder → END
     """
     graph = StateGraph(AgentState)
 
@@ -49,23 +47,14 @@ def build_graph() -> StateGraph:
     # Define the flow
     graph.set_entry_point("memory")
 
-    # Linear flow: memory → planner → collector → analyzer → evaluator
+    # Linear flow: memory → planner → collector → analyzer → evaluator → reflector
     graph.add_edge("memory", "planner")
     graph.add_edge("planner", "collector")
     graph.add_edge("collector", "analyzer")
     graph.add_edge("analyzer", "evaluator")
+    graph.add_edge("evaluator", "reflector")
 
-    # Conditional routing after evaluator
-    graph.add_conditional_edges(
-        "evaluator",
-        _evaluator_routing,
-        {
-            "builder": "builder",
-            "reflector": "reflector",
-        },
-    )
-
-    # After reflector: go back to collector or to builder
+    # Reflector decides: retry collection or build
     graph.add_conditional_edges(
         "reflector",
         _reflector_routing,
@@ -81,28 +70,14 @@ def build_graph() -> StateGraph:
     return graph
 
 
-def _evaluator_routing(state: AgentState) -> Literal["builder", "reflector"]:
-    """Route after evaluation: build if passed, reflect if not."""
-    evaluation = state.get("evaluation", {})
-
-    if evaluation.get("pass", False):
-        return "builder"
-
-    # Check max iterations
+def _reflector_routing(state: AgentState) -> Literal["collector", "builder"]:
+    """Route after reflection: Reflector decides whether to retry or build."""
+    reflection = state.get("reflection", {})
     iteration = state.get("iteration", 0)
     max_iterations = state.get("max_iterations", 3)
 
-    if iteration >= max_iterations:
-        return "builder"
-
-    return "reflector"
-
-
-def _reflector_routing(state: AgentState) -> Literal["collector", "builder"]:
-    """Route after reflection: retry collection or build."""
-    reflection = state.get("reflection", {})
-
-    if reflection.get("should_continue", False):
+    # Reflector decides: continue collecting or proceed to build
+    if reflection.get("should_continue", False) and iteration < max_iterations:
         return "collector"
 
     return "builder"
