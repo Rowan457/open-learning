@@ -244,6 +244,10 @@ def _collect_env_overrides() -> dict[str, Any]:
         overrides.setdefault("llm", {})["api_key"] = key
     if url := os.environ.get("MIMO_BASE_URL"):
         overrides.setdefault("llm", {})["base_url"] = url
+    if key := os.environ.get("TAVILY_API_KEY"):
+        overrides.setdefault("skills", {}).setdefault("search", {}).setdefault("providers", {})[
+            "tavily"
+        ] = {"api_key": key}
     if key := os.environ.get("GOOGLE_API_KEY"):
         overrides.setdefault("skills", {}).setdefault("search", {}).setdefault("providers", {})[
             "google"

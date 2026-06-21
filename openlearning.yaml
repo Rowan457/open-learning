@@ -43,6 +43,9 @@ skills:
     module: openlearning.skills.search
     enabled: true
     providers:
+      tavily:
+        api_key: ${TAVILY_API_KEY}
+        daily_limit: 1000
       google:
         api_key: ${GOOGLE_API_KEY}
         daily_limit: 100

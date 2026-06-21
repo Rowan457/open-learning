@@ -36,21 +36,53 @@ class GitHubInput(BaseModel):
 
 @tool("web_search", args_schema=SearchInput)
 async def web_search(query: str, max_results: int = 20) -> list[dict[str, Any]]:
-    """从 Google/Bing 搜索网页资源。
+    """搜索网页资源。
 
-    使用 SerpAPI 或 SearchAPI 获取搜索结果。
+    优先级: Tavily → SerpAPI → DuckDuckGo
     返回 [{url, title, snippet, source}] 列表。
     """
     config = get_config()
     providers = config.skills.search.providers
 
-    # Try SerpAPI first
+    # Try Tavily first (AI-optimized, works well in China)
+    if tavily_cfg := providers.get("tavily"):
+        if tavily_cfg.api_key:
+            return await _tavily_search(query, max_results, tavily_cfg.api_key)
+
+    # Try SerpAPI
     if google_cfg := providers.get("google"):
         if google_cfg.api_key:
             return await _serpapi_search(query, max_results, google_cfg.api_key)
 
     # Fallback to DuckDuckGo (free, no API key needed)
     return await _duckduckgo_search(query, max_results)
+
+
+async def _tavily_search(query: str, max_results: int, api_key: str) -> list[dict]:
+    """Search via Tavily API (AI-optimized search)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(
+            "https://api.tavily.com/search",
+            json={
+                "query": query,
+                "api_key": api_key,
+                "max_results": min(max_results, 20),
+                "include_answer": False,
+                "include_raw_content": False,
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    results = []
+    for item in data.get("results", [])[:max_results]:
+        results.append({
+            "url": item.get("url", ""),
+            "title": item.get("title", ""),
+            "snippet": item.get("content", "")[:300],
+            "source": "tavily",
+        })
+    return results
 
 
 async def _serpapi_search(query: str, max_results: int, api_key: str) -> list[dict]:
