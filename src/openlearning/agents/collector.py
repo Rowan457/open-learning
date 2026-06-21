@@ -133,8 +133,8 @@ async def _safe_invoke(tool, input_data: dict) -> list[dict]:
     try:
         result = await tool.ainvoke(input_data)
         return result if isinstance(result, list) else []
-    except Exception as e:
-        raise  # Re-raise to be caught by _parallel_collect
+    except Exception:
+        return []
 
 
 def _deduplicate(resources: list[dict], avoid_set: set[str]) -> list[dict]:

@@ -262,25 +262,33 @@ def _generate_search_queries(graph: dict, analysis: dict, profile: dict) -> list
 
 
 def _extract_english_keywords(topic: str, subtopics: list[str]) -> str:
-    """从主题中提取英文关键词。
+    """从主题中提取英文关键词，生成有意义的搜索词。
 
-    如果主题包含中文，尝试提取其中的英文部分。
-    如果全是中文，返回主题本身（让搜索 API 自行处理）。
+    策略：
+    1. 提取英文单词
+    2. 如果英文太短（<3字符），尝试组合子主题
+    3. 如果全是中文，用 LLM 翻译或返回原主题
     """
     import re
 
     # 提取主题中的英文单词
-    en_words = re.findall(r"[a-zA-Z]+", topic)
-    if en_words:
+    en_words = [w for w in re.findall(r"[a-zA-Z]+", topic) if len(w) > 1]
+
+    # 如果英文词足够，直接返回
+    if en_words and len(" ".join(en_words)) >= 4:
         return " ".join(en_words)
 
-    # 也从子主题中提取
+    # 从子主题中提取补充
     for sub in subtopics:
-        en_words = re.findall(r"[a-zA-Z]+", sub)
-        if en_words:
-            return " ".join(en_words[:3])
+        sub_words = [w for w in re.findall(r"[a-zA-Z]+", sub) if len(w) > 1]
+        if sub_words:
+            en_words.extend(sub_words[:2])
+            break
 
-    # 全是中文，返回原主题
+    if en_words:
+        return " ".join(en_words[:4])
+
+    # 全是中文，返回原主题（让搜索 API 自行处理）
     return topic
 
 
