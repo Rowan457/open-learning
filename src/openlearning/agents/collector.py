@@ -33,7 +33,7 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
         }
 
     # 1. Parallel collection from multiple sources
-    all_resources = await _parallel_collect(queries)
+    all_resources, errors = await _parallel_collect(queries)
 
     # 2. Dedup by URL
     deduplicated = _deduplicate(all_resources, avoid_set)
@@ -52,16 +52,26 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
 
     prev_count = state.get("collected_count", 0)
 
+    # Log errors for debugging
+    if errors:
+        print(f"[Collector] ⚠ {len(errors)} 个搜索任务失败:")
+        for err in errors[:5]:
+            print(f"  - {err}")
+
     return {
         "raw_resources": deduplicated,
         "collected_count": prev_count + len(deduplicated),
         "sources_queried": sources,
+        "search_errors": errors,
         "current_agent": "collector",
     }
 
 
-async def _parallel_collect(queries: list[str]) -> list[dict]:
-    """Collect resources from multiple sources in parallel."""
+async def _parallel_collect(queries: list[str]) -> tuple[list[dict], list[str]]:
+    """Collect resources from multiple sources in parallel.
+
+    Returns (resources, errors).
+    """
     from openlearning.skills.search import (
         arxiv_search,
         github_search,
@@ -70,31 +80,38 @@ async def _parallel_collect(queries: list[str]) -> list[dict]:
     )
 
     tasks = []
+    task_labels = []
     for query in queries[:10]:  # Limit to 10 queries to avoid rate limits
         query_lower = query.lower()
 
         if "arxiv" in query_lower or "paper" in query_lower:
             tasks.append(_safe_invoke(arxiv_search, {"query": query, "max_results": 10}))
+            task_labels.append(f"arxiv: {query[:30]}")
         elif "video" in query_lower:
             tasks.append(_safe_invoke(youtube_search, {"query": query, "max_results": 10}))
+            task_labels.append(f"youtube: {query[:30]}")
         elif "github" in query_lower:
             tasks.append(_safe_invoke(github_search, {"query": query}))
+            task_labels.append(f"github: {query[:30]}")
         else:
             tasks.append(_safe_invoke(web_search, {"query": query, "max_results": 15}))
+            task_labels.append(f"web: {query[:30]}")
             tasks.append(_safe_invoke(arxiv_search, {"query": query, "max_results": 5}))
+            task_labels.append(f"arxiv: {query[:30]}")
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Flatten results
+    # Flatten results and collect errors
     all_resources = []
-    for result in results:
+    errors = []
+    for i, result in enumerate(results):
+        label = task_labels[i] if i < len(task_labels) else f"task-{i}"
         if isinstance(result, list):
             all_resources.extend(result)
         elif isinstance(result, Exception):
-            # Log but don't fail
-            continue
+            errors.append(f"[{label}] {type(result).__name__}: {result}")
 
-    return all_resources
+    return all_resources, errors
 
 
 async def _safe_invoke(tool, input_data: dict) -> list[dict]:
@@ -102,8 +119,8 @@ async def _safe_invoke(tool, input_data: dict) -> list[dict]:
     try:
         result = await tool.ainvoke(input_data)
         return result if isinstance(result, list) else []
-    except Exception:
-        return []
+    except Exception as e:
+        raise  # Re-raise to be caught by _parallel_collect
 
 
 def _deduplicate(resources: list[dict], avoid_set: set[str]) -> list[dict]:
