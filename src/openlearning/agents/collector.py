@@ -70,6 +70,7 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
 async def _parallel_collect(queries: list[str]) -> tuple[list[dict], list[str]]:
     """Collect resources from multiple sources in parallel.
 
+    策略：主查询同时发送到所有源，确保多样性。
     Returns (resources, errors).
     """
     from openlearning.skills.search import (
@@ -81,9 +82,25 @@ async def _parallel_collect(queries: list[str]) -> tuple[list[dict], list[str]]:
 
     tasks = []
     task_labels = []
-    for query in queries[:10]:  # Limit to 10 queries to avoid rate limits
-        query_lower = query.lower()
 
+    # 主查询：同时发送到所有 4 个源（确保多样性）
+    main_queries = queries[:3]  # 取前 3 个查询
+    for query in main_queries:
+        tasks.append(_safe_invoke(web_search, {"query": query, "max_results": 15}))
+        task_labels.append(f"web: {query[:30]}")
+
+        tasks.append(_safe_invoke(arxiv_search, {"query": query, "max_results": 10}))
+        task_labels.append(f"arxiv: {query[:30]}")
+
+        tasks.append(_safe_invoke(youtube_search, {"query": query, "max_results": 10}))
+        task_labels.append(f"youtube: {query[:30]}")
+
+        tasks.append(_safe_invoke(github_search, {"query": query}))
+        task_labels.append(f"github: {query[:30]}")
+
+    # 补充查询：按关键词路由到特定源
+    for query in queries[3:8]:
+        query_lower = query.lower()
         if "arxiv" in query_lower or "paper" in query_lower:
             tasks.append(_safe_invoke(arxiv_search, {"query": query, "max_results": 10}))
             task_labels.append(f"arxiv: {query[:30]}")
@@ -94,10 +111,8 @@ async def _parallel_collect(queries: list[str]) -> tuple[list[dict], list[str]]:
             tasks.append(_safe_invoke(github_search, {"query": query}))
             task_labels.append(f"github: {query[:30]}")
         else:
-            tasks.append(_safe_invoke(web_search, {"query": query, "max_results": 15}))
+            tasks.append(_safe_invoke(web_search, {"query": query, "max_results": 10}))
             task_labels.append(f"web: {query[:30]}")
-            tasks.append(_safe_invoke(arxiv_search, {"query": query, "max_results": 5}))
-            task_labels.append(f"arxiv: {query[:30]}")
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
 

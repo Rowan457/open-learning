@@ -71,16 +71,20 @@ def _check_quality(resources: list[dict], min_avg: float = 6.0, min_single: floa
 
 
 def _check_coverage(graph: dict, resources: list[dict]) -> dict:
-    """Check knowledge graph nodes have resource coverage."""
+    """Check knowledge graph nodes have resource coverage.
+
+    Uses keyword-based fuzzy matching: split node name into words,
+    check if any keyword appears in resource title/snippet.
+    """
     nodes = graph.get("nodes", [])
     if not nodes:
         return {"pass": True, "reason": "No knowledge graph", "covered": 0, "total": 0}
 
-    # Build resource → concept mapping (simple keyword match)
-    resource_texts = []
+    # Build combined resource text for matching
+    all_resource_text = ""
     for r in resources:
-        text = (r.get("title", "") + " " + r.get("snippet", "")).lower()
-        resource_texts.append(text)
+        all_resource_text += " " + r.get("title", "") + " " + r.get("snippet", "")
+    all_resource_text = all_resource_text.lower()
 
     covered = 0
     uncovered = []
@@ -88,10 +92,16 @@ def _check_coverage(graph: dict, resources: list[dict]) -> dict:
         node_name = node.get("name", "").lower()
         node_id = node.get("id", "").lower().replace("_", " ")
 
-        # Check if any resource mentions this concept
-        is_covered = any(
-            node_name in text or node_id in text
-            for text in resource_texts
+        # Split name into keywords for fuzzy matching
+        keywords = [kw for kw in node_name.split() if len(kw) > 2]
+        if not keywords:
+            keywords = [node_name]
+
+        # Check: full name match OR any keyword match
+        is_covered = (
+            node_name in all_resource_text
+            or node_id in all_resource_text
+            or any(kw in all_resource_text for kw in keywords)
         )
 
         if is_covered:
