@@ -27,29 +27,142 @@ console = Console()
 
 @app.command()
 def init(
-    topic: str = typer.Argument(..., help="学习主题 (如 '机器学习入门')"),
-    level: str = typer.Option("beginner", "--level", "-l", help="难度: beginner/intermediate/advanced"),
-    lang: str = typer.Option("zh,en", "--lang", help="语言偏好: zh,en"),
+    topic: str = typer.Argument("", help="学习主题 (留空则进入对话模式)"),
+    level: str = typer.Option("", "--level", "-l", help="难度: beginner/intermediate/advanced"),
+    lang: str = typer.Option("", "--lang", help="语言偏好: zh,en"),
     from_file: Optional[str] = typer.Option(None, "--from-file", help="从配置文件创建"),
+    skip_chat: bool = typer.Option(False, "--skip-chat", "-y", help="跳过对话，直接使用默认值"),
 ):
-    """创建新的学习项目。"""
+    """创建新的学习项目。支持对话式主题确认。"""
     from openlearning.database import create_project, init_db
 
     console.print(Panel(f"[bold blue]OpenLearning[/] — 创建学习项目", subtitle="v0.1.0"))
+
+    # 对话模式：通过问答确定学习需求
+    if not skip_chat:
+        profile = _chat_collect_info(topic)
+    else:
+        profile = {
+            "topic": topic,
+            "level": level or "beginner",
+            "languages": lang.split(",") if lang else ["zh", "en"],
+            "goal": "",
+            "background": "",
+            "resource_types": ["article", "video", "paper", "repo"],
+        }
+
+    if not profile.get("topic"):
+        console.print("[red]未指定学习主题[/]")
+        raise typer.Exit(1)
 
     # Initialize database
     init_db()
 
     # Create project
-    project = create_project(title=topic, description=f"Level: {level}, Languages: {lang}")
+    desc_parts = []
+    if profile.get("goal"):
+        desc_parts.append(f"目标: {profile['goal']}")
+    if profile.get("background"):
+        desc_parts.append(f"基础: {profile['background']}")
+    desc_parts.append(f"难度: {profile.get('level', 'beginner')}")
+    desc_parts.append(f"语言: {','.join(profile.get('languages', ['zh', 'en']))}")
+
+    project = create_project(
+        title=profile["topic"],
+        description=" | ".join(desc_parts),
+    )
 
     console.print(f"\n[green]✓[/] 项目已创建: [bold]{project.title}[/]")
     console.print(f"  ID: {project.id}")
-    console.print(f"  数据库: {get_config().db_path}")
+    console.print(f"  描述: {project.description}")
 
     # Ask if user wants to start collecting
     if typer.confirm("\n立即开始采集资源?"):
-        _run_collect(project.id, topic, level, lang.split(","))
+        _run_collect(
+            project.id,
+            profile["topic"],
+            profile.get("level", "beginner"),
+            profile.get("languages", ["zh", "en"]),
+            user_profile=profile,
+        )
+
+
+def _chat_collect_info(initial_topic: str = "") -> dict:
+    """对话式收集学习需求。"""
+    console.print("\n[bold]📋 了解你的学习需求[/]\n")
+
+    # 1. 学习主题
+    topic = initial_topic
+    if not topic:
+        topic = console.input("[bold]你想学什么？[/] ").strip()
+    else:
+        console.print(f"[bold]学习主题:[/] {topic}")
+
+    # 2. 学习目标
+    console.print("\n[bold]你希望学到什么程度？[/]")
+    console.print("  例如：能独立开发项目 / 理解核心概念 / 通过面试 / 解决实际问题")
+    goal = console.input("[bold]学习目标[/] (可选，回车跳过): ").strip()
+
+    # 3. 已有基础
+    console.print(f"\n[bold]你目前有什么相关基础？[/]")
+    console.print("  例如：有 Python 经验 / 完全零基础 / 学过一些理论")
+    background = console.input("[bold]基础情况[/] (可选，回车跳过): ").strip()
+
+    # 4. 难度偏好
+    level = "beginner"
+    if background:
+        # 根据基础自动推荐难度
+        bg_lower = background.lower()
+        if any(w in bg_lower for w in ["精通", "熟练", "多年", "expert", "senior"]):
+            level = "advanced"
+        elif any(w in bg_lower for w in ["学过", "了解", "用过", "有基础", "intermediate"]):
+            level = "intermediate"
+
+    console.print(f"\n[bold]推荐难度:[/] {level}")
+    override = console.input("[bold]难度[/] (beginner/intermediate/advanced，回车使用推荐): ").strip()
+    if override in ("beginner", "intermediate", "advanced"):
+        level = override
+
+    # 5. 资源偏好
+    console.print("\n[bold]你偏好什么类型的学习资源？[/]")
+    console.print("  [dim]1[/] 文章/教程  [dim]2[/] 视频  [dim]3[/] 论文  [dim]4[/] 代码仓库  [dim]5[/] 全部")
+    type_input = console.input("[bold]选择[/] (可多选如 1,2,5，回车=全部): ").strip()
+
+    type_map = {"1": "article", "2": "video", "3": "paper", "4": "repo"}
+    if not type_input or "5" in type_input:
+        resource_types = ["article", "video", "paper", "repo"]
+    else:
+        resource_types = [type_map[c] for c in type_input.split(",") if c.strip() in type_map]
+        if not resource_types:
+            resource_types = ["article", "video", "paper", "repo"]
+
+    # 6. 语言偏好
+    lang_input = console.input("\n[bold]语言偏好[/] (zh,en / zh / en，回车=中英文): ").strip()
+    languages = [l.strip() for l in lang_input.split(",") if l.strip()] if lang_input else ["zh", "en"]
+
+    # 确认
+    console.print("\n" + "─" * 40)
+    console.print("[bold]📋 学习需求确认[/]")
+    console.print(f"  主题:     [bold]{topic}[/]")
+    console.print(f"  目标:     {goal or '(未指定)'}")
+    console.print(f"  基础:     {background or '(未指定)'}")
+    console.print(f"  难度:     {level}")
+    console.print(f"  资源类型: {', '.join(resource_types)}")
+    console.print(f"  语言:     {', '.join(languages)}")
+    console.print("─" * 40)
+
+    if not typer.confirm("确认开始?"):
+        console.print("[yellow]已取消[/]")
+        raise typer.Exit(0)
+
+    return {
+        "topic": topic,
+        "goal": goal,
+        "background": background,
+        "level": level,
+        "resource_types": resource_types,
+        "languages": languages,
+    }
 
 
 @app.command()
@@ -138,6 +251,7 @@ def _run_collect(
     level: str,
     lang: list[str],
     max_iterations: int = 2,
+    user_profile: dict | None = None,
 ):
     """Run the full collection pipeline."""
     from openlearning.agents.graph import run_pipeline
@@ -145,9 +259,17 @@ def _run_collect(
 
     init_db()
 
+    # Build profile from conversation or parameters
+    profile = user_profile or {}
+    profile.setdefault("level", level)
+    profile.setdefault("lang", lang)
+    profile.setdefault("user_id", "default")
+
     console.print(f"\n[bold]开始采集: {topic}[/]")
     console.print(f"  难度: {level}")
     console.print(f"  语言: {', '.join(lang)}")
+    if profile.get("goal"):
+        console.print(f"  目标: {profile['goal']}")
     console.print(f"  最大迭代: {max_iterations}\n")
 
     with Progress(
@@ -162,7 +284,7 @@ def _run_collect(
             result = asyncio.run(
                 run_pipeline(
                     user_request=topic,
-                    user_profile={"level": level, "lang": lang, "user_id": "default"},
+                    user_profile=profile,
                     max_iterations=max_iterations,
                 )
             )
