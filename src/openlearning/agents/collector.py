@@ -42,6 +42,14 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
         print(f"[Collector] ⚠ {len(errors)} 个错误:")
         for err in errors[:5]:
             print(f"  - {err}")
+
+    # Debug: log per-source counts
+    source_counts: dict[str, int] = {}
+    for r in all_resources:
+        src = r.get("source", "unknown")
+        source_counts[src] = source_counts.get(src, 0) + 1
+    if source_counts:
+        print(f"[Collector] 来源分布: {source_counts}")
     if not all_resources:
         print(f"[Collector] 查询词: {queries[:5]}")
 

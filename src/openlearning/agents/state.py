@@ -3,7 +3,8 @@
 All agents read from and write to this TypedDict via LangGraph StateGraph.
 """
 
-from typing import Any, TypedDict
+import operator
+from typing import Annotated, Any, TypedDict
 
 
 class AgentState(TypedDict, total=False):
@@ -15,23 +16,23 @@ class AgentState(TypedDict, total=False):
 
     # ── Memory Output ────────────────────────────────────────
     user_memory: dict  # three-layer memory: project/preference/learning
-    avoid_list: list[str]  # already-recommended URLs (for dedup)
+    avoid_list: Annotated[list[str], operator.add]  # already-recommended URLs
 
     # ── Planner Output ───────────────────────────────────────
     knowledge_graph: dict  # nodes + edges + dependencies
-    search_queries: list[str]  # generated search keywords
+    search_queries: Annotated[list[str], operator.add]  # generated search keywords
     learning_plan: dict  # full plan with tree + crawl tasks
 
     # ── Collector Output ─────────────────────────────────────
-    raw_resources: list[dict]  # collected raw resources
+    raw_resources: Annotated[list[dict], operator.add]  # collected raw resources
     collected_count: int  # total collected so far
-    sources_queried: list[str]  # which sources were queried
+    sources_queried: Annotated[list[str], operator.add]  # which sources were queried
 
     # ── Analyzer Output ──────────────────────────────────────
-    analyzed_resources: list[dict]  # scored + summarized resources
+    analyzed_resources: Annotated[list[dict], operator.add]  # scored + summarized
     avg_quality_score: float
-    extracted_concepts: list[dict]  # knowledge concepts
-    concept_relations: list[dict]  # prerequisite/extends/related edges
+    extracted_concepts: Annotated[list[dict], operator.add]  # knowledge concepts
+    concept_relations: Annotated[list[dict], operator.add]  # prerequisite/extends/related
 
     # ── Evaluation Engine Output ─────────────────────────────
     evaluation: dict  # rule engine results
@@ -47,4 +48,4 @@ class AgentState(TypedDict, total=False):
     current_agent: str  # name of the agent currently executing
     status: str  # running / done / error
     max_iterations: int  # max collection iterations (default 3)
-    search_errors: list[str]  # search error log
+    search_errors: Annotated[list[str], operator.add]  # search error log
