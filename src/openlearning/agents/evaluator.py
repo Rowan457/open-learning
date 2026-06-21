@@ -57,6 +57,7 @@ def _check_quality(resources: list[dict], min_avg: float = 5.0, min_single: floa
     阈值说明:
     - min_avg=5.0: 平均分 5.0 即可（满分 10）
     - min_single=3.0: 单个资源最低 3.0
+    - 允许最多 15% 的资源低于阈值（避免少数低分资源拖垮整体）
     """
     if not resources:
         return {"pass": False, "reason": "No resources", "avg": 0.0, "low_count": 0}
@@ -64,14 +65,17 @@ def _check_quality(resources: list[dict], min_avg: float = 5.0, min_single: floa
     scores = [r.get("quality_score", 0) for r in resources]
     avg = sum(scores) / len(scores) if scores else 0.0
     low_count = sum(1 for s in scores if s < min_single)
+    low_ratio = low_count / len(scores) if scores else 0.0
 
-    passed = avg >= min_avg and low_count == 0
+    # 通过条件：平均分达标 + 低分资源不超过 15%
+    passed = avg >= min_avg and low_ratio <= 0.15
 
     return {
         "pass": passed,
         "avg": round(avg, 2),
         "low_count": low_count,
-        "reason": f"Avg={avg:.1f} (need ≥{min_avg}), {low_count} below {min_single}",
+        "low_ratio": round(low_ratio, 2),
+        "reason": f"Avg={avg:.1f} (need ≥{min_avg}), {low_count} below {min_single} ({low_ratio:.0%}, need ≤15%)",
     }
 
 
