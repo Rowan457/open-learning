@@ -3,14 +3,7 @@
 All agents read from and write to this TypedDict via LangGraph StateGraph.
 """
 
-from __future__ import annotations
-
-from typing import Annotated, Any, TypedDict
-
-
-def _merge_list(existing: list, new: list) -> list:
-    """Merge strategy for list fields: replace with new value."""
-    return new
+from typing import Any, TypedDict
 
 
 class AgentState(TypedDict, total=False):
@@ -22,23 +15,23 @@ class AgentState(TypedDict, total=False):
 
     # ── Memory Output ────────────────────────────────────────
     user_memory: dict  # three-layer memory: project/preference/learning
-    avoid_list: Annotated[list[str], _merge_list]  # already-recommended URLs
+    avoid_list: list[str]  # already-recommended URLs (for dedup)
 
     # ── Planner Output ───────────────────────────────────────
     knowledge_graph: dict  # nodes + edges + dependencies
-    search_queries: Annotated[list[str], _merge_list]  # generated search keywords
+    search_queries: list[str]  # generated search keywords
     learning_plan: dict  # full plan with tree + crawl tasks
 
     # ── Collector Output ─────────────────────────────────────
-    raw_resources: Annotated[list[dict], _merge_list]  # collected raw resources
+    raw_resources: list[dict]  # collected raw resources
     collected_count: int  # total collected so far
-    sources_queried: Annotated[list[str], _merge_list]  # which sources were queried
+    sources_queried: list[str]  # which sources were queried
 
     # ── Analyzer Output ──────────────────────────────────────
-    analyzed_resources: Annotated[list[dict], _merge_list]  # scored + summarized
+    analyzed_resources: list[dict]  # scored + summarized resources
     avg_quality_score: float
-    extracted_concepts: Annotated[list[dict], _merge_list]  # knowledge concepts
-    concept_relations: Annotated[list[dict], _merge_list]  # prerequisite/extends/related
+    extracted_concepts: list[dict]  # knowledge concepts
+    concept_relations: list[dict]  # prerequisite/extends/related edges
 
     # ── Evaluation Engine Output ─────────────────────────────
     evaluation: dict  # rule engine results
@@ -54,4 +47,4 @@ class AgentState(TypedDict, total=False):
     current_agent: str  # name of the agent currently executing
     status: str  # running / done / error
     max_iterations: int  # max collection iterations (default 3)
-    search_errors: Annotated[list[str], _merge_list]  # search error log
+    search_errors: list[str]  # search error log

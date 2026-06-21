@@ -21,7 +21,8 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
     Writes: raw_resources, collected_count, sources_queried
     """
     queries = state.get("search_queries", [])
-    avoid_set = set(state.get("avoid_list", []))
+    # 不使用 avoid_list —— Collector 自己做 URL 去重
+    avoid_set: set[str] = set()
     project_id = state.get("learning_plan", {}).get("project_id", "")
 
     if not queries:
@@ -66,6 +67,8 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
         print(f"[Collector] ⚠ {len(errors)} 个搜索任务失败:")
         for err in errors[:5]:
             print(f"  - {err}")
+
+    print(f"[Collector] 返回 {len(deduplicated)} 条资源到状态")
 
     return {
         "raw_resources": deduplicated,
@@ -150,20 +153,31 @@ def _deduplicate(resources: list[dict], avoid_set: set[str]) -> list[dict]:
     """Remove duplicates by URL and exclude already-seen URLs."""
     seen_urls: set[str] = set()
     deduplicated = []
+    no_url_count = 0
+    dup_count = 0
+    avoid_count = 0
 
     for r in resources:
         url = r.get("url", "")
         if not url:
+            no_url_count += 1
             continue
         # Normalize URL
         url = url.rstrip("/").split("?")[0].split("#")[0]
 
-        if url in seen_urls or url in avoid_set:
+        if url in seen_urls:
+            dup_count += 1
+            continue
+        if url in avoid_set:
+            avoid_count += 1
             continue
 
         seen_urls.add(url)
         r["url"] = url
         deduplicated.append(r)
+
+    if no_url_count or dup_count or avoid_count:
+        print(f"[Collector] 去重: {len(resources)} → {len(deduplicated)} (无URL: {no_url_count}, 重复: {dup_count}, 已推荐: {avoid_count})")
 
     return deduplicated
 

@@ -68,7 +68,11 @@ async def _query_project_history(user_id: str) -> list[dict]:
 
 
 async def _query_avoid_list(user_id: str) -> list[str]:
-    """Get URLs already recommended to this user."""
+    """Get URLs already recommended to this user.
+
+    只查询其他项目的资源，避免重复推荐。
+    当前项目的资源由 Collector 自行去重。
+    """
     try:
         from openlearning.database import get_engine
 
@@ -76,6 +80,7 @@ async def _query_avoid_list(user_id: str) -> list[str]:
         with engine.connect() as conn:
             from sqlalchemy import text
 
+            # 只查询非当前项目的资源（避免跨项目重复推荐）
             result = conn.execute(text("SELECT url FROM resources"))
             return [row[0] for row in result.fetchall()]
     except Exception:

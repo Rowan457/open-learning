@@ -85,7 +85,22 @@ def _reflector_routing(state: AgentState) -> Literal["planner", "builder"]:
 def compile_graph():
     """Compile the graph into a runnable."""
     graph = build_graph()
-    return graph.compile()
+    compiled = graph.compile()
+
+    # Debug: print state at each step
+    original_invoke = compiled.ainvoke
+
+    async def debug_invoke(input_data, **kwargs):
+        result = await original_invoke(input_data, **kwargs)
+        # Print final state summary
+        print(f"\n[Graph] 最终状态:")
+        print(f"  raw_resources: {len(result.get('raw_resources', []))}")
+        print(f"  analyzed_resources: {len(result.get('analyzed_resources', []))}")
+        print(f"  evaluation: {result.get('evaluation', {})}")
+        return result
+
+    compiled.ainvoke = debug_invoke
+    return compiled
 
 
 # ── Convenience runner ───────────────────────────────────────
