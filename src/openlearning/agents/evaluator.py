@@ -21,17 +21,17 @@ async def evaluator_engine(state: AgentState) -> dict[str, Any]:
     iteration = state.get("iteration", 0)
     max_iterations = state.get("max_iterations", 3)
 
-    # 1. Quality check
-    quality = _check_quality(resources, min_avg=6.0, min_single=3.0)
+    # 1. Quality check (avg ≥ 5.0, single ≥ 3.0)
+    quality = _check_quality(resources, min_avg=5.0, min_single=3.0)
 
-    # 2. Coverage check
+    # 2. Coverage check (≥ 60% nodes covered)
     coverage = _check_coverage(graph, resources)
 
-    # 3. Diversity check
+    # 3. Diversity check (≥ 3 types)
     diversity = _check_diversity(resources, min_types=3)
 
-    # 4. Freshness check
-    freshness = _check_freshness(resources, min_recent_ratio=0.3)
+    # 4. Freshness check (≥ 20% recent among dated resources)
+    freshness = _check_freshness(resources, min_recent_ratio=0.2)
 
     # 5. Overall judgment
     all_passed = all([quality["pass"], coverage["pass"], diversity["pass"], freshness["pass"]])
@@ -51,8 +51,13 @@ async def evaluator_engine(state: AgentState) -> dict[str, Any]:
     }
 
 
-def _check_quality(resources: list[dict], min_avg: float = 6.0, min_single: float = 3.0) -> dict:
-    """Check quality scores meet thresholds."""
+def _check_quality(resources: list[dict], min_avg: float = 5.0, min_single: float = 3.0) -> dict:
+    """Check quality scores meet thresholds.
+
+    阈值说明:
+    - min_avg=5.0: 平均分 5.0 即可（满分 10）
+    - min_single=3.0: 单个资源最低 3.0
+    """
     if not resources:
         return {"pass": False, "reason": "No resources", "avg": 0.0, "low_count": 0}
 
@@ -144,33 +149,55 @@ def _check_diversity(resources: list[dict], min_types: int = 3) -> dict:
     }
 
 
-def _check_freshness(resources: list[dict], min_recent_ratio: float = 0.3) -> dict:
-    """Check that enough resources are recent (within 1 year)."""
+def _check_freshness(resources: list[dict], min_recent_ratio: float = 0.2) -> dict:
+    """Check that enough resources are recent (within 2 years).
+
+    逻辑:
+    - 有日期且在 2 年内 → recent
+    - 有日期且超过 2 年 → old
+    - 无日期 → unknown（不计入分母）
+    - 只在有日期的资源中计算 recent 比例
+    """
     if not resources:
         return {"pass": False, "reason": "No resources", "recent_ratio": 0.0}
 
     from datetime import datetime, timedelta
 
-    one_year_ago = datetime.utcnow() - timedelta(days=365)
+    two_years_ago = datetime.utcnow() - timedelta(days=730)
     recent_count = 0
+    old_count = 0
+    unknown_count = 0
 
     for r in resources:
         published = r.get("published", "")
         if published:
             try:
                 pub_date = datetime.strptime(published[:10], "%Y-%m-%d")
-                if pub_date > one_year_ago:
+                if pub_date > two_years_ago:
                     recent_count += 1
+                else:
+                    old_count += 1
             except (ValueError, TypeError):
-                pass
+                unknown_count += 1
+        else:
+            unknown_count += 1
 
-    ratio = recent_count / len(resources) if resources else 0.0
+    # 只在有日期的资源中计算比例
+    dated_count = recent_count + old_count
+    if dated_count > 0:
+        ratio = recent_count / dated_count
+    else:
+        # 没有资源有日期，假设都是新的（避免过度惩罚）
+        ratio = 1.0
+
     passed = ratio >= min_recent_ratio
 
     return {
         "pass": passed,
         "recent_count": recent_count,
+        "old_count": old_count,
+        "unknown_count": unknown_count,
         "total": len(resources),
         "ratio": round(ratio, 2),
-        "reason": f"{recent_count}/{len(resources)} recent ({ratio:.0%}), need ≥{min_recent_ratio:.0%}",
+        "reason": f"{recent_count}/{dated_count} dated resources recent ({ratio:.0%}), {unknown_count} unknown dates",
     }

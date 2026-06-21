@@ -52,66 +52,76 @@ def _rule_score(content: str, metadata: dict) -> dict[str, float]:
     """Rule-based quality scoring (zero LLM cost).
 
     Dimensions: authority, richness, freshness, community, structure.
+    权重: authority(25%) + richness(20%) + freshness(20%) + community(15%) + structure(20%)
     """
     scores: dict[str, float] = {}
-
-    # 1. Authority (source credibility)
     source = metadata.get("source", "")
+
+    # ── 1. Authority (来源权威性) ─────────────────────────
     authority_map = {
-        "arxiv": 9.0,
-        "github": 7.0,
-        "youtube": 6.0,
-        "google": 5.0,
-        "duckduckgo": 4.0,
+        "arxiv": 8.0,      # 学术论文，权威
+        "github": 7.0,      # 代码仓库，实用
+        "youtube": 6.0,     # 视频教程，直观
+        "google": 6.0,      # 网页搜索，通用
+        "tavily": 6.0,      # AI 优化搜索
+        "duckduckgo": 5.0,  # 免费搜索
     }
     scores["authority"] = authority_map.get(source, 5.0)
 
-    # Extra: GitHub stars
+    # GitHub stars 加成
     if stars := metadata.get("stars"):
-        if stars > 10000:
-            scores["authority"] = min(10, scores["authority"] + 2)
+        if stars > 5000:
+            scores["authority"] = min(10, scores["authority"] + 2.0)
         elif stars > 1000:
-            scores["authority"] = min(10, scores["authority"] + 1)
+            scores["authority"] = min(10, scores["authority"] + 1.5)
+        elif stars > 100:
+            scores["authority"] = min(10, scores["authority"] + 1.0)
 
-    # 2. Content richness
+    # ── 2. Content Richness (内容丰富度) ─────────────────
     content_len = len(content)
     code_blocks = content.count("```")
     has_images = "![" in content or "<img" in content
 
-    richness = 3.0
-    if content_len > 5000:
+    # 基础分：根据内容长度
+    if content_len > 3000:
         richness = 7.0
-    elif content_len > 2000:
+    elif content_len > 1500:
+        richness = 6.0
+    elif content_len > 500:
         richness = 5.0
-    if code_blocks > 3:
-        richness = min(10, richness + 1.5)
+    else:
+        richness = 4.0  # 短内容也能接受
+
+    # 加成
+    if code_blocks > 0:
+        richness = min(10, richness + 1.5)  # 有代码块
     if has_images:
-        richness = min(10, richness + 0.5)
+        richness = min(10, richness + 0.5)  # 有图片
     scores["richness"] = richness
 
-    # 3. Freshness
+    # ── 3. Freshness (时效性) ────────────────────────────
     published = metadata.get("published", "")
     if published:
         try:
             pub_date = datetime.strptime(published[:10], "%Y-%m-%d")
             age_days = (datetime.utcnow() - pub_date).days
             if age_days < 180:
-                scores["freshness"] = 10.0
+                scores["freshness"] = 9.0   # 6 个月内
             elif age_days < 365:
-                scores["freshness"] = 8.0
+                scores["freshness"] = 7.0   # 1 年内
             elif age_days < 730:
-                scores["freshness"] = 6.0
+                scores["freshness"] = 5.0   # 2 年内
             elif age_days < 1825:
-                scores["freshness"] = 4.0
+                scores["freshness"] = 3.0   # 5 年内
             else:
-                scores["freshness"] = 2.0
+                scores["freshness"] = 2.0   # 超过 5 年
         except (ValueError, TypeError):
-            scores["freshness"] = 5.0
+            scores["freshness"] = 6.0  # 解析失败，给中等分
     else:
-        scores["freshness"] = 5.0  # unknown
+        scores["freshness"] = 6.0  # 无日期，假设较新（避免过度惩罚）
 
-    # 4. Community (stars, comments, etc.)
-    scores["community"] = 5.0  # default, enriched by metadata
+    # ── 4. Community (社区认可) ──────────────────────────
+    scores["community"] = 5.0  # 默认
     if stars := metadata.get("stars"):
         if stars > 5000:
             scores["community"] = 9.0
@@ -120,18 +130,21 @@ def _rule_score(content: str, metadata: dict) -> dict[str, float]:
         elif stars > 100:
             scores["community"] = 6.0
 
-    # 5. Structure quality
+    # ── 5. Structure (结构质量) ─────────────────────────
     has_headings = "#" in content or "<h" in content
-    has_list = "- " in content or "<li" in content
+    has_list = "- " in content or "<li" in content or "* " in content
     has_code = "```" in content or "<code" in content
+    has_links = "http" in content
 
-    structure = 4.0
+    structure = 4.0  # 基础分
     if has_headings:
         structure += 2.0
     if has_list:
-        structure += 1.5
+        structure += 1.0
     if has_code:
         structure += 1.5
+    if has_links:
+        structure += 0.5
     scores["structure"] = min(10, structure)
 
     return scores
