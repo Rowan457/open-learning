@@ -67,10 +67,17 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
     }
 
 
+def _is_chinese(text: str) -> bool:
+    """Check if text contains Chinese characters."""
+    return any("一" <= c <= "鿿" for c in text)
+
+
 async def _parallel_collect(queries: list[str]) -> tuple[list[dict], list[str]]:
     """Collect resources from multiple sources in parallel.
 
-    策略：主查询同时发送到所有源，确保多样性。
+    策略：
+    - 中文查询 → 仅 web search（SerpAPI/Tavily 支持中文）
+    - 英文查询 → 所有源（arXiv/YouTube/GitHub 需要英文）
     Returns (resources, errors).
     """
     from openlearning.skills.search import (
@@ -83,9 +90,17 @@ async def _parallel_collect(queries: list[str]) -> tuple[list[dict], list[str]]:
     tasks = []
     task_labels = []
 
-    # 主查询：同时发送到所有 4 个源（确保多样性）
-    main_queries = queries[:3]  # 取前 3 个查询
-    for query in main_queries:
+    # 分离中英文查询
+    zh_queries = [q for q in queries if _is_chinese(q)][:3]
+    en_queries = [q for q in queries if not _is_chinese(q)][:5]
+
+    # 中文查询 → 仅 web search
+    for query in zh_queries:
+        tasks.append(_safe_invoke(web_search, {"query": query, "max_results": 15}))
+        task_labels.append(f"web: {query[:30]}")
+
+    # 英文查询 → 所有 4 个源
+    for query in en_queries:
         tasks.append(_safe_invoke(web_search, {"query": query, "max_results": 15}))
         task_labels.append(f"web: {query[:30]}")
 
@@ -97,22 +112,6 @@ async def _parallel_collect(queries: list[str]) -> tuple[list[dict], list[str]]:
 
         tasks.append(_safe_invoke(github_search, {"query": query}))
         task_labels.append(f"github: {query[:30]}")
-
-    # 补充查询：按关键词路由到特定源
-    for query in queries[3:8]:
-        query_lower = query.lower()
-        if "arxiv" in query_lower or "paper" in query_lower:
-            tasks.append(_safe_invoke(arxiv_search, {"query": query, "max_results": 10}))
-            task_labels.append(f"arxiv: {query[:30]}")
-        elif "video" in query_lower:
-            tasks.append(_safe_invoke(youtube_search, {"query": query, "max_results": 10}))
-            task_labels.append(f"youtube: {query[:30]}")
-        elif "github" in query_lower:
-            tasks.append(_safe_invoke(github_search, {"query": query}))
-            task_labels.append(f"github: {query[:30]}")
-        else:
-            tasks.append(_safe_invoke(web_search, {"query": query, "max_results": 10}))
-            task_labels.append(f"web: {query[:30]}")
 
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
