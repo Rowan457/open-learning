@@ -53,7 +53,7 @@ skills:
       youtube:
         api_key: ${YOUTUBE_API_KEY}
       github:
-        token: ${GITHUB_TOKEN}
+        api_key: ${GITHUB_TOKEN}
   fetch:
     module: openlearning.skills.fetch
     enabled: true

@@ -153,7 +153,7 @@ async def arxiv_search(query: str, max_results: int = 10) -> list[dict[str, Any]
 
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
-            "http://export.arxiv.org/api/query",
+            "https://export.arxiv.org/api/query",
             params={
                 "search_query": f"all:{query}",
                 "start": 0,
