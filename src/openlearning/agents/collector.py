@@ -35,6 +35,15 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
     # 1. Parallel collection from multiple sources
     all_resources, errors = await _parallel_collect(queries)
 
+    # Debug: log collection stats
+    print(f"[Collector] 查询 {len(queries)} 个，返回 {len(all_resources)} 条资源")
+    if errors:
+        print(f"[Collector] ⚠ {len(errors)} 个错误:")
+        for err in errors[:5]:
+            print(f"  - {err}")
+    if not all_resources:
+        print(f"[Collector] 查询词: {queries[:5]}")
+
     # 2. Dedup by URL
     deduplicated = _deduplicate(all_resources, avoid_set)
 

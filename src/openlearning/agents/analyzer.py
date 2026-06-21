@@ -23,7 +23,10 @@ async def analyzer_agent(state: AgentState) -> dict[str, Any]:
     knowledge_graph = state.get("knowledge_graph", {})
     avoid_list = set(state.get("avoid_list", []))
 
+    print(f"[Analyzer] 收到 {len(resources)} 条资源")
+
     if not resources:
+        print("[Analyzer] 无资源，跳过分析")
         return {
             "analyzed_resources": [],
             "extracted_concepts": [],
