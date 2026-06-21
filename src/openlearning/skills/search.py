@@ -38,21 +38,21 @@ class GitHubInput(BaseModel):
 async def web_search(query: str, max_results: int = 20) -> list[dict[str, Any]]:
     """搜索网页资源。
 
-    优先级: Tavily → SerpAPI → DuckDuckGo
+    优先级: SerpAPI → Tavily → DuckDuckGo
     返回 [{url, title, snippet, source}] 列表。
     """
     config = get_config()
     providers = config.skills.search.providers
 
-    # Try Tavily first (AI-optimized, works well in China)
-    if tavily_cfg := providers.get("tavily"):
-        if tavily_cfg.api_key:
-            return await _tavily_search(query, max_results, tavily_cfg.api_key)
-
-    # Try SerpAPI
+    # Try SerpAPI first
     if google_cfg := providers.get("google"):
         if google_cfg.api_key:
             return await _serpapi_search(query, max_results, google_cfg.api_key)
+
+    # Try Tavily
+    if tavily_cfg := providers.get("tavily"):
+        if tavily_cfg.api_key:
+            return await _tavily_search(query, max_results, tavily_cfg.api_key)
 
     # Fallback to DuckDuckGo (free, no API key needed)
     return await _duckduckgo_search(query, max_results)
