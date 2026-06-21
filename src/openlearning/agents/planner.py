@@ -217,42 +217,71 @@ def _expand_knowledge_graph(analysis: dict) -> dict:
 
 
 def _generate_search_queries(graph: dict, analysis: dict, profile: dict) -> list[str]:
-    """Generate search query matrix."""
+    """Generate search query matrix.
+
+    为不同数据源生成不同查询：
+    - 中文查询 → web search (SerpAPI/Tavily)
+    - 英文查询 → arXiv/YouTube/GitHub
+    """
     topic = analysis["topic"]
+    subtopics = analysis.get("subtopics", [])
     languages = analysis.get("languages", ["zh", "en"])
     queries = []
 
-    # Main topic queries
+    # 提取英文关键词（用于国际源）
+    en_keywords = _extract_english_keywords(topic, subtopics)
+
+    # ── Web search 查询（中英文均可）─────────────────────
     for lang in languages:
         if lang == "zh":
             queries.append(f"{topic} 教程 入门")
             queries.append(f"{topic} 学习资源 推荐")
         else:
-            queries.append(f"{topic} tutorial beginner")
-            queries.append(f"{topic} best resources")
+            queries.append(f"{en_keywords} tutorial beginner")
+            queries.append(f"{en_keywords} best resources")
 
-    # Subtopic queries
-    for node in graph.get("nodes", []):
-        name = node.get("name", "")
-        if name == topic:
-            continue
-        for lang in languages[:1]:  # Limit to primary language for subtopics
-            if lang == "zh":
-                queries.append(f"{name} 教程")
-            else:
-                queries.append(f"{name} tutorial")
+    # ── arXiv 查询（必须英文）───────────────────────────
+    queries.append(f"{en_keywords} survey")
+    queries.append(f"{en_keywords} tutorial")
 
-    # Academic queries
-    queries.append(f"{topic} survey paper")
-    queries.append(f"arxiv {topic}")
+    # ── YouTube 查询（英文优先）────────────────────────
+    queries.append(f"{en_keywords} tutorial video")
+    queries.append(f"{en_keywords} course")
 
-    # Video queries
-    queries.append(f"{topic} video tutorial")
+    # ── GitHub 查询（英文）─────────────────────────────
+    queries.append(f"{en_keywords} examples")
+    queries.append(f"{en_keywords} awesome")
 
-    # Code queries
-    queries.append(f"{topic} github examples")
+    # ── 子主题查询 ─────────────────────────────────────
+    for sub in subtopics[:3]:
+        en_sub = _extract_english_keywords(sub, [])
+        if en_sub:
+            queries.append(f"{en_sub} tutorial")
 
     return queries
+
+
+def _extract_english_keywords(topic: str, subtopics: list[str]) -> str:
+    """从主题中提取英文关键词。
+
+    如果主题包含中文，尝试提取其中的英文部分。
+    如果全是中文，返回主题本身（让搜索 API 自行处理）。
+    """
+    import re
+
+    # 提取主题中的英文单词
+    en_words = re.findall(r"[a-zA-Z]+", topic)
+    if en_words:
+        return " ".join(en_words)
+
+    # 也从子主题中提取
+    for sub in subtopics:
+        en_words = re.findall(r"[a-zA-Z]+", sub)
+        if en_words:
+            return " ".join(en_words[:3])
+
+    # 全是中文，返回原主题
+    return topic
 
 
 def _build_crawl_plan(queries: list[str], analysis: dict) -> list[dict]:
