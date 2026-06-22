@@ -126,4 +126,65 @@ Format: `phase(<N>): <title> ✓`
 ---
 
 next:
-- [ ] Phase 1: MVP 核心采集 + 生成
+- [ ] Phase 4: 持续更新引擎 (增量采集/变更检测/定时更新)
+
+---
+
+## phase(5): 内容质量 + Supervisor + Memory ✓
+
+**日期**: 2026-06-22
+
+### 内容质量提升
+- Analyzer: fetch 全文 + LLM 深度分析 (extract/tag/summarize 并行化)
+- Builder: LLM 生成丰富知识点 (定义/详解/要点/实例/误区/建议)
+- Builder/Analyzer 并发 3→8, 性能提升 ~5x
+- 知识页面 9 个内容区块 + 推荐资源卡片
+- 文件名安全处理 (节点 ID 中的路径分隔符)
+
+### Supervisor 动态编排
+- 规则路由 → LLM 决策 (achat_json, 回退规则逻辑)
+- Graph 重构为中心路由: START → supervisor → [agent] → supervisor → END
+- 新增 supervisor_log 决策日志
+
+### Memory 系统接入
+- Memory Agent: 调用 memory/gaps.py + preferences 推断
+- Planner: 读取 mastery 跳过已掌握, 生成缺口搜索词
+- Builder: 记录学习事件到 learning_events 表
+- 修复 update_mastery 双事务 bug (合并为单事务)
+- SM-2 逻辑去重 (skills/memory → memory/mastery.py)
+
+---
+
+## phase(6): 站点体验升级 ✓
+
+**日期**: 2026-06-22
+
+### Index 页面
+- 全节点显示 (去掉 nodes[:20] 限制), 按 importance 排序
+- 类型+难度双维度筛选, 类型分布色条
+- 搜索修复 (data-id 属性匹配)
+- 收藏夹入口
+
+### Graph 页面
+- 搜索框高亮匹配节点
+- hover tooltip (type/difficulty/definition)
+- 浮动图例面板
+- 布局切换 (层次/力导向/环形/网格)
+- 暗色模式边线修复
+
+### Learning Path 页面
+- 使用前置关系 Mermaid 图 (非顺序连接)
+- 按难度分阶段折叠 (入门/基础/进阶/高级)
+- 进度跟踪 (checkbox + localStorage + 进度条)
+- priority=high 标识
+
+### Concept 页面
+- 显示 edge 的 reason 和 weight
+- 前后翻页导航
+- 重要度星级 (node.importance)
+- 图谱入口按钮
+- 进阶方向修复 (用 prerequisite edges)
+
+### 新增 Bookmarks 页面
+- 收藏管理 (查看/移除/清空)
+- 空状态引导
