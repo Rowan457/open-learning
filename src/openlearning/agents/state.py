@@ -44,6 +44,10 @@ class AgentState(TypedDict, total=False):
     # ── Builder Output ───────────────────────────────────────
     learning_system: dict  # generated site path + graph + path
 
+    # ── Supervisor ───────────────────────────────────────────
+    supervisor_log: Annotated[list[dict], operator.add]  # decision history
+    _next_agent: str  # supervisor's routing decision (internal)
+
     # ── Flow Control ─────────────────────────────────────────
     current_agent: str  # name of the agent currently executing
     status: str  # running / done / error

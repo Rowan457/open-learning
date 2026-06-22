@@ -94,11 +94,12 @@ async def update_mastery(
     from datetime import timedelta
 
     from openlearning.database import get_engine
+    from openlearning.memory.mastery import schedule_review
 
     engine = get_engine()
     now = datetime.utcnow()
 
-    # Single connection for read + write (transactional consistency)
+    # Single transaction for read + calculate + write
     with engine.begin() as conn:
         from sqlalchemy import text
 
@@ -123,38 +124,27 @@ async def update_mastery(
                 {"id": f"{user_id}_{concept_id}", "uid": user_id, "cid": concept_id, "now": now},
             )
 
-    # Calculate new mastery based on event
-    mastery_delta = {
-        "started": 0.1,
-        "practiced": 0.15,
-        "mastered": 0.4,
-        "reviewed": 0.1,
-        "tested": 0.0,  # depends on score
-    }
+        # Calculate new mastery based on event
+        mastery_delta = {
+            "started": 0.1,
+            "practiced": 0.15,
+            "mastered": 0.4,
+            "reviewed": 0.1,
+            "tested": 0.0,
+        }
+        delta = mastery_delta.get(event, 0.1)
+        if event == "tested" and score is not None:
+            delta = (score / 100.0) * 0.3
 
-    delta = mastery_delta.get(event, 0.1)
+        new_mastery = min(1.0, current_mastery + delta)
 
-    # For tests, use score
-    if event == "tested" and score is not None:
-        delta = (score / 100.0) * 0.3  # up to 0.3 from a test
+        # Use shared SM-2 logic from memory/mastery.py
+        review = schedule_review(new_mastery, stability)
+        interval = review["next_review_days"]
+        new_stability = review["stability"]
+        next_review = now + timedelta(days=interval)
 
-    new_mastery = min(1.0, current_mastery + delta)
-
-    # SM-2 inspired interval calculation
-    if new_mastery >= 0.9:
-        interval = stability * 2.5
-    elif new_mastery >= 0.6:
-        interval = stability * 1.5
-    else:
-        interval = max(1, stability * 0.5)
-
-    next_review = now + timedelta(days=interval)
-    new_stability = stability * (1 + 0.1 * new_mastery)
-
-    # Update in same transaction block
-    with engine.begin() as conn:
-        from sqlalchemy import text
-
+        # Write in same transaction
         conn.execute(
             text("""
                 UPDATE concept_mastery
@@ -173,7 +163,6 @@ async def update_mastery(
                 "cid": concept_id,
             },
         )
-        conn.commit()
 
     return {
         "success": True,
@@ -235,11 +224,45 @@ async def get_preferences(user_id: str) -> dict[str, Any]:
         for row in result:
             lang_prefs[row.language] = round(row.cnt / total, 2)
 
+    # Infer difficulty and learning_style from interaction data
+    difficulty = "intermediate"
+    learning_style = "reading"
+
+    # Infer learning style from resource type preferences
+    if type_prefs:
+        top_type = max(type_prefs, key=type_prefs.get)
+        style_map = {"video": "visual", "repo": "hands-on", "paper": "reading", "article": "reading"}
+        learning_style = style_map.get(top_type, "reading")
+
+    # Try to infer difficulty from memory module
+    try:
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            result = conn.execute(text("""
+                SELECT AVG(CASE WHEN r.difficulty = 'beginner' THEN 1
+                                WHEN r.difficulty = 'intermediate' THEN 2
+                                WHEN r.difficulty = 'advanced' THEN 3
+                                ELSE 2 END) as avg_diff
+                FROM resource_interactions ri
+                JOIN resources r ON ri.resource_id = r.id
+                WHERE ri.user_id = :uid AND ri.action IN ('completed', 'rated')
+            """), {"uid": user_id}).fetchone()
+            if result and result.avg_diff:
+                avg = result.avg_diff
+                if avg < 1.5:
+                    difficulty = "beginner"
+                elif avg < 2.5:
+                    difficulty = "intermediate"
+                else:
+                    difficulty = "advanced"
+    except Exception:
+        pass
+
     return {
         "resource_type": type_prefs,
         "language": lang_prefs,
-        "difficulty": "intermediate",  # default, can be inferred
-        "learning_style": "reading",  # default, can be inferred from type_prefs
+        "difficulty": difficulty,
+        "learning_style": learning_style,
     }
 
 
@@ -264,7 +287,7 @@ async def record_event(
 
     engine = get_engine()
 
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         from sqlalchemy import text
 
         conn.execute(
@@ -282,7 +305,6 @@ async def record_event(
                 "time": time_spent,
             },
         )
-        conn.commit()
 
     # Also update mastery
     await update_mastery.ainvoke({

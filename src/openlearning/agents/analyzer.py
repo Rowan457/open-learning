@@ -11,10 +11,11 @@ from openlearning.agents.state import AgentState
 
 
 async def analyzer_agent(state: AgentState) -> dict[str, Any]:
-    """Analyzer subgraph: two-stage analysis pipeline.
+    """Analyzer subgraph: three-stage analysis pipeline.
 
     Stage 1: Rule-based scoring (zero LLM cost)
-    Stage 2: Deep analysis for high-score resources
+    Stage 2: Fetch full content for top resources
+    Stage 3: LLM deep analysis (knowledge extraction, summary, tagging)
 
     Reads: raw_resources, knowledge_graph, avoid_list
     Writes: analyzed_resources, extracted_concepts, concept_relations, knowledge_graph
@@ -47,64 +48,101 @@ async def analyzer_agent(state: AgentState) -> dict[str, Any]:
     for r in low_score:
         r["analysis_level"] = "metadata_only"
 
-    # ── Stage 2: Deep analysis for high-score resources ──────
-    analyzed = []
+    # ── Stage 2: Fetch full content for top high-score resources ──
+    # Sort by quality, fetch top 8 to balance depth vs cost
+    high_score.sort(key=lambda x: x.get("quality_score", 0), reverse=True)
+    fetch_targets = high_score[:8]
+    fetch_rest = high_score[8:]
+
+    print(f"[Analyzer] 抓取 {len(fetch_targets)} 条资源全文...")
+    fetched = await _fetch_contents(fetch_targets)
+
+    # Merge fetched content back
+    for r in fetch_rest:
+        r["full_content"] = r.get("snippet", "")
+    for r in fetched:
+        if not r.get("full_content"):
+            r["full_content"] = r.get("snippet", "")
+
+    all_high = fetched + fetch_rest
+
+    # ── Stage 3: LLM deep analysis (parallel) ──────────────
+    import asyncio
+    semaphore = asyncio.Semaphore(8)  # Max 8 concurrent LLM calls
     all_concepts = []
     all_relations = []
 
-    for resource in high_score:
-        content = resource.get("snippet", "") + " " + resource.get("title", "")
+    async def _analyze_one(resource: dict) -> dict:
+        """Analyze a single resource: extract + tag + summarize in parallel."""
+        async with semaphore:
+            content = resource.get("full_content", "") or resource.get("snippet", "")
+            if len(content) < 50:
+                content = resource.get("snippet", "") + " " + resource.get("title", "")
 
-        # Knowledge extraction
-        try:
-            from openlearning.skills.analyze import extract_knowledge
+            # Run extract, tag, summarize concurrently
+            extract_task = _llm_extract(content)
+            tag_task = _llm_tag(content, resource.get("title", ""))
+            summary_task = _llm_summarize(content)
 
-            knowledge = await extract_knowledge.ainvoke({
-                "content": content,
-                "existing_concepts": [c.get("name", "") for c in all_concepts],
-            })
-            concepts = knowledge.get("concepts", [])
-        except Exception:
+            results = await asyncio.gather(extract_task, tag_task, summary_task, return_exceptions=True)
+
+            # Extract
             concepts = []
+            if isinstance(results[0], dict):
+                concepts = results[0].get("concepts", [])
+            elif isinstance(results[0], Exception):
+                try:
+                    from openlearning.skills.analyze import extract_knowledge
+                    knowledge = await extract_knowledge.ainvoke({"content": content})
+                    concepts = knowledge.get("concepts", [])
+                except Exception:
+                    pass
 
-        # Relation discovery
-        try:
-            from openlearning.skills.analyze import discover_relations
+            # Tag
+            tags = results[1] if isinstance(results[1], dict) else {}
 
-            relations = await discover_relations.ainvoke({
-                "new_concepts": concepts,
-                "existing_graph": knowledge_graph,
-            })
-        except Exception:
+            # Summary
+            summary_data = results[2] if isinstance(results[2], dict) else {}
+
+            # Relation discovery (needs concepts first)
             relations = []
+            try:
+                from openlearning.skills.analyze import discover_relations
+                relations = await discover_relations.ainvoke({
+                    "new_concepts": concepts,
+                    "existing_graph": knowledge_graph,
+                })
+            except Exception:
+                pass
 
-        # Tagging
-        try:
-            from openlearning.skills.analyze import tag
+            title = resource.get("title", "")[:40]
+            print(f"[Analyzer] ✓ {title}: {len(concepts)} 概念, {tags.get('difficulty', '?')}")
 
-            tags = await tag.ainvoke({"content": content})
-        except Exception:
-            tags = {}
+            return {
+                **resource,
+                "knowledge": {"concepts": concepts},
+                "tags": tags,
+                "summary": summary_data.get("summary", ""),
+                "key_points": summary_data.get("key_points", []),
+                "one_line_summary": summary_data.get("one_line_summary", ""),
+                "analysis_level": "full",
+                "_concepts": concepts,
+                "_relations": relations,
+            }
 
-        # Summary
-        try:
-            from openlearning.skills.analyze import summarize
+    # Process all resources concurrently (up to 8 at a time)
+    print(f"[Analyzer] 并发分析 {len(all_high)} 条资源 (并发=8)...")
+    analyzed = list(await asyncio.gather(*[_analyze_one(r) for r in all_high]))
 
-            summary_data = await summarize.ainvoke({"content": content})
-        except Exception:
-            summary_data = {}
+    # Collect concepts and relations from results
+    for result in analyzed:
+        all_concepts.extend(result.pop("_concepts", []))
+        all_relations.extend(result.pop("_relations", []))
 
-        all_concepts.extend(concepts)
-        all_relations.extend(relations)
-
-        analyzed.append({
-            **resource,
-            "knowledge": {"concepts": concepts},
-            "tags": tags,
-            "summary": summary_data.get("summary", ""),
-            "key_points": summary_data.get("key_points", []),
-            "analysis_level": "full",
-        })
+    # Mark fetch_rest as full analysis too
+    for resource in fetch_rest:
+        if resource not in analyzed:
+            resource["analysis_level"] = "full"
 
     # Merge into knowledge graph
     updated_graph = _merge_into_graph(knowledge_graph, all_concepts, all_relations)
@@ -125,6 +163,74 @@ async def analyzer_agent(state: AgentState) -> dict[str, Any]:
         "avg_quality_score": round(avg_score, 2),
         "current_agent": "analyzer",
     }
+
+
+async def _fetch_contents(resources: list[dict]) -> list[dict]:
+    """Fetch full page content for top resources using fetch skill."""
+    from openlearning.skills.fetch import fetch_page
+
+    async def _fetch_one(r: dict) -> dict:
+        url = r.get("url", "")
+        if not url:
+            r["full_content"] = r.get("snippet", "")
+            return r
+        try:
+            result = await fetch_page.ainvoke({"url": url})
+            if result.get("success") and result.get("content"):
+                r["full_content"] = result["content"][:15000]  # Cap at 15k chars
+                r["fetched_title"] = result.get("title", r.get("title", ""))
+                print(f"[Analyzer] ✓ 抓取成功: {url[:60]} ({len(r['full_content'])} 字符)")
+            else:
+                r["full_content"] = r.get("snippet", "")
+                print(f"[Analyzer] ✗ 抓取失败: {url[:60]}")
+        except Exception as e:
+            r["full_content"] = r.get("snippet", "")
+            print(f"[Analyzer] ✗ 抓取异常: {url[:60]} - {e}")
+        return r
+
+    # Fetch in parallel with concurrency limit
+    import asyncio
+    semaphore = asyncio.Semaphore(4)
+
+    async def _bounded_fetch(r: dict) -> dict:
+        async with semaphore:
+            return await _fetch_one(r)
+
+    return await asyncio.gather(*[_bounded_fetch(r) for r in resources])
+
+
+async def _llm_extract(content: str) -> dict:
+    """LLM knowledge extraction."""
+    try:
+        from openlearning.skills.analyze import llm_extract_knowledge
+        return await llm_extract_knowledge.ainvoke({
+            "content": content[:6000],
+            "existing_concepts": [],
+        })
+    except Exception:
+        return {"concepts": []}
+
+
+async def _llm_tag(content: str, title: str = "") -> dict:
+    """LLM tagging."""
+    try:
+        from openlearning.skills.analyze import llm_tag
+        return await llm_tag.ainvoke({"content": content[:4000], "title": title})
+    except Exception:
+        return {}
+
+
+async def _llm_summarize(content: str) -> dict:
+    """LLM summary."""
+    try:
+        from openlearning.skills.analyze import llm_summarize
+        return await llm_summarize.ainvoke({
+            "content": content[:6000],
+            "lang": "zh",
+            "max_length": 500,
+        })
+    except Exception:
+        return {}
 
 
 async def _rule_based_scoring(resources: list[dict]) -> list[dict]:

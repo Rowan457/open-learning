@@ -1,6 +1,7 @@
 """Memory Agent — user memory management subgraph.
 
 Queries three-layer memory: project, preference, learning.
+Uses memory/ module functions instead of inline duplicates.
 """
 
 from __future__ import annotations
@@ -19,6 +20,9 @@ async def memory_agent(state: AgentState) -> dict[str, Any]:
     user_profile = state.get("user_profile", {})
     user_id = user_profile.get("user_id", "default")
     user_request = state.get("user_request", "")
+    knowledge_graph = state.get("knowledge_graph", {})
+
+    print(f"[Memory] 查询用户记忆: {user_id}")
 
     # ── Layer 1: Project Memory ──────────────────────────────
     history = await _query_project_history(user_id)
@@ -30,10 +34,16 @@ async def memory_agent(state: AgentState) -> dict[str, Any]:
 
     # ── Layer 3: Learning Memory ─────────────────────────────
     mastery = await _query_mastery(user_id)
-    gaps = _analyze_knowledge_gaps(state.get("knowledge_graph", {}), mastery)
+
+    # Use the richer gaps analysis from memory/ module
+    gaps = _analyze_gaps(knowledge_graph, mastery)
 
     # ── Generate Suggestions ─────────────────────────────────
     suggestions = _generate_suggestions(mastery, gaps, preferences)
+
+    mastered_count = len(mastery.get("mastered", []))
+    learning_count = len(mastery.get("learning", []))
+    print(f"[Memory] 已掌握: {mastered_count}, 学习中: {learning_count}, 缺口: {len(gaps)}")
 
     return {
         "user_memory": {
@@ -103,7 +113,34 @@ async def _learn_preferences(user_id: str) -> dict:
     try:
         from openlearning.skills.memory import get_preferences
 
-        return await get_preferences.ainvoke({"user_id": user_id})
+        prefs = await get_preferences.ainvoke({"user_id": user_id})
+
+        # Enrich with memory/preferences.py if interaction data available
+        try:
+            from openlearning.database import get_engine
+            from sqlalchemy import text
+
+            engine = get_engine()
+            with engine.connect() as conn:
+                result = conn.execute(text(
+                    "SELECT r.resource_type, r.language, ri.event "
+                    "FROM resource_interactions ri "
+                    "JOIN resources r ON ri.resource_id = r.id "
+                    "WHERE ri.user_id = :uid ORDER BY ri.created_at DESC LIMIT 50"
+                ), {"uid": user_id})
+                interactions = [dict(zip(result.keys(), row)) for row in result.fetchall()]
+
+            if interactions:
+                from openlearning.memory.preferences import infer_preferences
+                inferred = infer_preferences(interactions)
+                # Merge: inferred overrides hardcoded defaults
+                for key in ("difficulty", "learning_style"):
+                    if inferred.get(key) and inferred[key] != prefs.get(key):
+                        prefs[key] = inferred[key]
+        except Exception:
+            pass
+
+        return prefs
     except Exception:
         return {
             "resource_type": {},
@@ -139,23 +176,30 @@ async def _query_mastery(user_id: str) -> dict:
         }
 
 
-def _analyze_knowledge_gaps(graph: dict, mastery: dict) -> list[str]:
-    """Compare knowledge graph vs mastery to find gaps."""
-    if not graph:
-        return []
+def _analyze_gaps(graph: dict, mastery: dict) -> list[dict]:
+    """Compare knowledge graph vs mastery to find gaps.
 
-    nodes = graph.get("nodes", [])
-    mastered_ids = {m.get("concept_id", "") for m in mastery.get("mastered", [])}
-    learning_ids = {m.get("concept_id", "") for m in mastery.get("learning", [])}
-    covered = mastered_ids | learning_ids
+    Uses memory/gaps.py for enriched gap analysis (sorted by importance).
+    """
+    try:
+        from openlearning.memory.gaps import analyze_knowledge_gaps
 
-    gaps = []
-    for node in nodes:
-        node_id = node.get("id", "")
-        if node_id not in covered:
-            gaps.append(node_id)
-
-    return gaps
+        mastery_list = (
+            mastery.get("mastered", [])
+            + mastery.get("learning", [])
+            + mastery.get("not_started", [])
+        )
+        return analyze_knowledge_gaps(graph, mastery_list)
+    except Exception:
+        # Fallback to simple version
+        if not graph:
+            return []
+        nodes = graph.get("nodes", [])
+        mastered_ids = {m.get("concept_id", "") for m in mastery.get("mastered", [])}
+        learning_ids = {m.get("concept_id", "") for m in mastery.get("learning", [])}
+        covered = mastered_ids | learning_ids
+        return [{"concept_id": n.get("id"), "name": n.get("name"), "importance": n.get("importance", 0.5)}
+                for n in nodes if n.get("id") not in covered]
 
 
 def _generate_suggestions(mastery: dict, gaps: list, preferences: dict) -> list[str]:
@@ -166,9 +210,18 @@ def _generate_suggestions(mastery: dict, gaps: list, preferences: dict) -> list[
         suggestions.append("有概念需要复习，建议先巩固已有知识")
 
     if gaps:
-        suggestions.append(f"发现 {len(gaps)} 个知识缺口，建议在学习路径中补充")
+        # gaps can be list[str] (simple) or list[dict] (enriched)
+        if isinstance(gaps[0], dict):
+            top_gaps = [g.get("name", g.get("concept_id", "")) for g in gaps[:3]]
+        else:
+            top_gaps = gaps[:3]
+        suggestions.append(f"发现 {len(gaps)} 个知识缺口，优先补充: {', '.join(top_gaps)}")
 
     if not mastery.get("mastered") and not mastery.get("learning"):
         suggestions.append("这是全新领域，建议从基础概念开始")
+
+    prefs_diff = preferences.get("difficulty", "")
+    if prefs_diff:
+        suggestions.append(f"推荐难度: {prefs_diff}")
 
     return suggestions

@@ -1,11 +1,12 @@
 """Main graph compilation — assembles all agents into a LangGraph StateGraph.
 
-This is the entry point for the multi-agent system.
+Supervisor-driven dynamic orchestration: every agent returns to the Supervisor,
+which decides the next step based on current state.
 """
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from langgraph.graph import END, StateGraph
 
@@ -17,25 +18,21 @@ from openlearning.agents.memory import memory_agent
 from openlearning.agents.planner import planner_agent
 from openlearning.agents.reflector import reflector_agent
 from openlearning.agents.state import AgentState
-from openlearning.agents.supervisor import supervisor_decide
+from openlearning.agents.supervisor import supervisor_node, supervisor_route
 
 
 def build_graph() -> StateGraph:
-    """Build the main agent graph with all sub-agents.
+    """Build the main agent graph with Supervisor-driven routing.
 
     Flow:
-        START → memory → planner → collector → analyzer → evaluator → reflector
-                          ↑                                              │
-                          │         ┌────────────────────────────────────┘
-                          │         │ should_continue
-                          │         ▼
-                          └──── planner (re-plan)
-                                     │
-                                     └──→ builder → END
+        START → supervisor → [agent] → supervisor → ... → END
+
+    The Supervisor observes state after each agent and decides the next step.
     """
     graph = StateGraph(AgentState)
 
     # Add all agent nodes
+    graph.add_node("supervisor", supervisor_node)
     graph.add_node("memory", memory_agent)
     graph.add_node("planner", planner_agent)
     graph.add_node("collector", collector_agent)
@@ -44,42 +41,30 @@ def build_graph() -> StateGraph:
     graph.add_node("reflector", reflector_agent)
     graph.add_node("builder", builder_agent)
 
-    # Define the flow
-    graph.set_entry_point("memory")
+    # Entry: go to supervisor first
+    graph.set_entry_point("supervisor")
 
-    # Linear flow: memory → planner → collector → analyzer → evaluator → reflector
-    graph.add_edge("memory", "planner")
-    graph.add_edge("planner", "collector")
-    graph.add_edge("collector", "analyzer")
-    graph.add_edge("analyzer", "evaluator")
-    graph.add_edge("evaluator", "reflector")
-
-    # Reflector decides: re-plan or build
+    # Supervisor routes to any agent
     graph.add_conditional_edges(
-        "reflector",
-        _reflector_routing,
+        "supervisor",
+        supervisor_route,
         {
+            "memory": "memory",
             "planner": "planner",
+            "collector": "collector",
+            "analyzer": "analyzer",
+            "evaluator": "evaluator",
+            "reflector": "reflector",
             "builder": "builder",
+            "end": END,
         },
     )
 
-    # Builder → END
-    graph.add_edge("builder", END)
+    # Every agent returns to supervisor
+    for agent_name in ["memory", "planner", "collector", "analyzer", "evaluator", "reflector", "builder"]:
+        graph.add_edge(agent_name, "supervisor")
 
     return graph
-
-
-def _reflector_routing(state: AgentState) -> Literal["planner", "builder"]:
-    """Reflector decides: back to Planner for re-plan, or to Builder."""
-    reflection = state.get("reflection", {})
-    iteration = state.get("iteration", 0)
-    max_iterations = state.get("max_iterations", 3)
-
-    if reflection.get("should_continue", False) and iteration < max_iterations:
-        return "planner"
-
-    return "builder"
 
 
 def compile_graph():
@@ -97,6 +82,14 @@ def compile_graph():
         print(f"  raw_resources: {len(result.get('raw_resources', []))}")
         print(f"  analyzed_resources: {len(result.get('analyzed_resources', []))}")
         print(f"  evaluation: {result.get('evaluation', {})}")
+
+        # Print supervisor decisions
+        log = result.get("supervisor_log", [])
+        if log:
+            print(f"  supervisor 决策 ({len(log)} 次):")
+            for entry in log:
+                print(f"    {entry.get('from', '?')} → {entry.get('to', '?')}: {entry.get('reason', '')}")
+
         return result
 
     compiled.ainvoke = debug_invoke
