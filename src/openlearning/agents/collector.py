@@ -10,6 +10,9 @@ import hashlib
 from typing import Any
 
 from openlearning.agents.state import AgentState
+from openlearning.log import get_logger
+
+logger = get_logger("Collector")
 
 
 async def collector_agent(state: AgentState) -> dict[str, Any]:
@@ -37,9 +40,9 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
     all_resources, errors = await _parallel_collect(queries)
 
     # Debug: log collection stats
-    print(f"[Collector] 查询 {len(queries)} 个，返回 {len(all_resources)} 条资源")
+    logger.info("查询 %s 个，返回 %s 条资源", len(queries), len(all_resources))
     if errors:
-        print(f"[Collector] ⚠ {len(errors)} 个错误:")
+        logger.warning("⚠ %s 个错误:", len(errors))
         for err in errors[:5]:
             print(f"  - {err}")
 
@@ -49,9 +52,9 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
         src = r.get("source", "unknown")
         source_counts[src] = source_counts.get(src, 0) + 1
     if source_counts:
-        print(f"[Collector] 来源分布: {source_counts}")
+        logger.info("来源分布: %s", source_counts)
     if not all_resources:
-        print(f"[Collector] 查询词: {queries[:5]}")
+        logger.info("查询词: %s", queries[:5])
 
     # 2. Dedup by URL
     deduplicated = _deduplicate(all_resources, avoid_set)
@@ -72,11 +75,11 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
 
     # Log errors for debugging
     if errors:
-        print(f"[Collector] ⚠ {len(errors)} 个搜索任务失败:")
+        logger.warning("⚠ %s 个搜索任务失败:", len(errors))
         for err in errors[:5]:
             print(f"  - {err}")
 
-    print(f"[Collector] 返回 {len(deduplicated)} 条资源到状态")
+    logger.info("返回 %s 条资源到状态", len(deduplicated))
 
     return {
         "raw_resources": deduplicated,
@@ -185,7 +188,7 @@ def _deduplicate(resources: list[dict], avoid_set: set[str]) -> list[dict]:
         deduplicated.append(r)
 
     if no_url_count or dup_count or avoid_count:
-        print(f"[Collector] 去重: {len(resources)} → {len(deduplicated)} (无URL: {no_url_count}, 重复: {dup_count}, 已推荐: {avoid_count})")
+        logger.info("去重: %s → %s (无URL: %s, 重复: %s, 已推荐: %s)", len(resources), len(deduplicated), no_url_count, dup_count, avoid_count)
 
     return deduplicated
 

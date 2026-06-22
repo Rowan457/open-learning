@@ -9,6 +9,9 @@ from __future__ import annotations
 from typing import Any
 
 from openlearning.agents.state import AgentState
+from openlearning.log import get_logger
+
+logger = get_logger("Supervisor")
 
 
 # ── Supervisor Node ──────────────────────────────────────────
@@ -126,11 +129,11 @@ async def _llm_decide(state: AgentState) -> dict[str, str]:
         # Validate agent name
         valid_agents = {"memory", "planner", "collector", "analyzer", "evaluator", "reflector", "builder", "end"}
         if next_agent in valid_agents:
-            print(f"[Supervisor] LLM 决策: {next_agent} — {reason}")
+            logger.info("LLM 决策: %s — %s", next_agent, reason)
             return {"next_agent": next_agent, "reason": reason}
 
     except Exception as e:
-        print(f"[Supervisor] LLM 决策失败: {e}, 回退规则路由")
+        logger.error("LLM 决策失败: %s, 回退规则路由", e)
 
     # Fallback to rule-based
     return {"next_agent": _rule_based_decide(state), "reason": "rule-based fallback"}

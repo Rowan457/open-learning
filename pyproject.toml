@@ -38,6 +38,7 @@ dependencies = [
     "tiktoken>=0.7.0",
     # Scheduler
     "apscheduler>=3.10.0",
+    "tenacity>=9.1.4",
 ]
 
 [project.optional-dependencies]
@@ -66,3 +67,8 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+
+[dependency-groups]
+dev = [
+    "pytest-asyncio>=1.4.0",
+]

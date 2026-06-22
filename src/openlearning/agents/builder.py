@@ -8,6 +8,9 @@ from __future__ import annotations
 from typing import Any
 
 from openlearning.agents.state import AgentState
+from openlearning.log import get_logger
+
+logger = get_logger("Builder")
 
 
 async def builder_agent(state: AgentState) -> dict[str, Any]:
@@ -25,9 +28,9 @@ async def builder_agent(state: AgentState) -> dict[str, Any]:
     knowledge_resources = _match_resources_to_concepts(graph, resources)
 
     # 2. Enrich concept nodes with LLM-generated content
-    print(f"[Builder] 输入知识图谱: {len(graph.get('nodes', []))} 个节点")
+    logger.info("输入知识图谱: %s 个节点", len(graph.get('nodes', [])))
     enriched_graph = await _enrich_concepts(graph, knowledge_resources, user_request)
-    print(f"[Builder] 丰富后图谱: {len(enriched_graph.get('nodes', []))} 个节点")
+    logger.info("丰富后图谱: %s 个节点", len(enriched_graph.get('nodes', [])))
 
     # 3. Generate personalized learning path
     learning_path = _generate_learning_path(enriched_graph, memory)
@@ -167,9 +170,9 @@ async def _enrich_node(
         node["examples"] = _flatten_str_list(result.get("examples", []))
         node["common_mistakes"] = _flatten_str_list(result.get("common_mistakes", []))
         node["learning_tips"] = result.get("learning_tips", "")
-        print(f"[Builder] ✓ 丰富内容: {concept_name}")
+        logger.info("✓ 丰富内容: %s", concept_name)
     except Exception as e:
-        print(f"[Builder] ✗ 内容生成失败: {concept_name} - {e}")
+        logger.error("✗ 内容生成失败: %s - %s", concept_name, e)
         # Keep existing data, ensure fields exist
         node.setdefault("explanation", "")
         node.setdefault("key_points", [])
@@ -312,11 +315,11 @@ async def _build_site(graph: dict, path: dict, resources: dict) -> dict:
             "knowledge_resources": resources,
             "output_dir": "./output/",
         })
-        print(f"[Builder] 站点生成: {result.get('pages_generated', 0)} 页")
+        logger.info("站点生成: %s 页", result.get('pages_generated', 0))
         return result
     except Exception as e:
         import traceback
-        print(f"[Builder] ✗ 站点生成失败: {e}")
+        logger.error("✗ 站点生成失败: %s", e)
         traceback.print_exc()
         return {"error": str(e), "site_path": "", "pages_generated": 0}
 
@@ -351,6 +354,6 @@ async def _record_learning_events(user_id: str, graph: dict) -> None:
                     })
                 except Exception:
                     continue
-        print(f"[Builder] 记录学习事件: {min(len(nodes), 20)} 个概念")
+        logger.info("记录学习事件: %s 个概念", min(len(nodes), 20))
     except Exception as e:
-        print(f"[Builder] 记录学习事件失败: {e}")
+        logger.info("记录学习事件失败: %s", e)

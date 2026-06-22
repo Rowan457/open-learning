@@ -6,7 +6,7 @@ Tools: score, summarize, tag, extract_knowledge, discover_relations, compare
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from langchain_core.tools import tool
@@ -104,7 +104,7 @@ def _rule_score(content: str, metadata: dict) -> dict[str, float]:
     if published:
         try:
             pub_date = datetime.strptime(published[:10], "%Y-%m-%d")
-            age_days = (datetime.utcnow() - pub_date).days
+            age_days = (datetime.now(timezone.utc).replace(tzinfo=None) - pub_date).days
             if age_days < 180:
                 scores["freshness"] = 9.0   # 6 个月内
             elif age_days < 365:
@@ -175,7 +175,7 @@ async def score(content: str, metadata: dict | None = None) -> dict[str, Any]:
     if published:
         try:
             pub_date = datetime.strptime(published[:10], "%Y-%m-%d")
-            age_days = (datetime.utcnow() - pub_date).days
+            age_days = (datetime.now(timezone.utc).replace(tzinfo=None) - pub_date).days
             if age_days < 180:
                 multiplier = 1.0
             elif age_days < 730:

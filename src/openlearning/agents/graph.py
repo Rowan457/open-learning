@@ -19,6 +19,9 @@ from openlearning.agents.planner import planner_agent
 from openlearning.agents.reflector import reflector_agent
 from openlearning.agents.state import AgentState
 from openlearning.agents.supervisor import supervisor_node, supervisor_route
+from openlearning.log import get_logger
+
+logger = get_logger("Graph")
 
 
 def build_graph() -> StateGraph:
@@ -78,7 +81,7 @@ def compile_graph():
     async def debug_invoke(input_data, **kwargs):
         result = await original_invoke(input_data, **kwargs)
         # Print final state summary
-        print(f"\n[Graph] 最终状态:")
+        logger.info("最终状态:")
         print(f"  raw_resources: {len(result.get('raw_resources', []))}")
         print(f"  analyzed_resources: {len(result.get('analyzed_resources', []))}")
         print(f"  evaluation: {result.get('evaluation', {})}")

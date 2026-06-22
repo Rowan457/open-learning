@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -32,7 +32,7 @@ class CostTracker:
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "cost": cost,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
     def get_daily_cost(self) -> float:

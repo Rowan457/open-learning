@@ -5,7 +5,7 @@ Tools: get_mastery, update_mastery, get_preferences, record_event
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from langchain_core.tools import tool
@@ -97,7 +97,7 @@ async def update_mastery(
     from openlearning.memory.mastery import schedule_review
 
     engine = get_engine()
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
     # Single transaction for read + calculate + write
     with engine.begin() as conn:
@@ -290,7 +290,7 @@ async def record_event(
     with engine.begin() as conn:
         from sqlalchemy import text
 
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         conn.execute(
             text("""
                 INSERT INTO learning_events (id, user_id, concept_id, event_type, resource_id, score, time_spent, created_at)

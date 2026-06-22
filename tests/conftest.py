@@ -7,10 +7,22 @@ from sqlmodel import SQLModel, create_engine, Session
 
 
 @pytest.fixture
-def engine():
-    """Create an in-memory SQLite engine for testing."""
+def engine(monkeypatch):
+    """Create an in-memory SQLite engine for testing.
+
+    Patches openlearning.database.get_engine to return the test engine
+    so that skills/memory.py and other DB-dependent code uses it.
+    """
+    import openlearning.models  # Register all SQLModel tables
+
     eng = create_engine("sqlite:///:memory:", echo=False)
     SQLModel.metadata.create_all(eng)
+
+    # Patch get_engine to return test engine
+    import openlearning.database
+    openlearning.database._engine = eng  # Reset singleton
+    monkeypatch.setattr(openlearning.database, "get_engine", lambda url=None: eng)
+
     return eng
 
 

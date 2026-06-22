@@ -8,6 +8,9 @@ from __future__ import annotations
 from typing import Any
 
 from openlearning.agents.state import AgentState
+from openlearning.log import get_logger
+
+logger = get_logger("Analyzer")
 
 
 async def analyzer_agent(state: AgentState) -> dict[str, Any]:
@@ -24,10 +27,10 @@ async def analyzer_agent(state: AgentState) -> dict[str, Any]:
     knowledge_graph = state.get("knowledge_graph", {})
     avoid_list = set(state.get("avoid_list", []))
 
-    print(f"[Analyzer] 收到 {len(resources)} 条资源")
+    logger.info("收到 %s 条资源", len(resources))
 
     if not resources:
-        print("[Analyzer] 无资源，跳过分析")
+        logger.info("无资源，跳过分析")
         return {
             "analyzed_resources": [],
             "extracted_concepts": [],
@@ -54,7 +57,7 @@ async def analyzer_agent(state: AgentState) -> dict[str, Any]:
     fetch_targets = high_score[:8]
     fetch_rest = high_score[8:]
 
-    print(f"[Analyzer] 抓取 {len(fetch_targets)} 条资源全文...")
+    logger.info("抓取 %s 条资源全文...", len(fetch_targets))
     fetched = await _fetch_contents(fetch_targets)
 
     # Merge fetched content back
@@ -116,7 +119,7 @@ async def analyzer_agent(state: AgentState) -> dict[str, Any]:
                 pass
 
             title = resource.get("title", "")[:40]
-            print(f"[Analyzer] ✓ {title}: {len(concepts)} 概念, {tags.get('difficulty', '?')}")
+            logger.info("✓ %s: %s 概念, %s", title, len(concepts), tags.get('difficulty', '?'))
 
             return {
                 **resource,
@@ -131,7 +134,7 @@ async def analyzer_agent(state: AgentState) -> dict[str, Any]:
             }
 
     # Process all resources concurrently (up to 8 at a time)
-    print(f"[Analyzer] 并发分析 {len(all_high)} 条资源 (并发=8)...")
+    logger.info("并发分析 %s 条资源 (并发=8)...", len(all_high))
     analyzed = list(await asyncio.gather(*[_analyze_one(r) for r in all_high]))
 
     # Collect concepts and relations from results
@@ -179,13 +182,13 @@ async def _fetch_contents(resources: list[dict]) -> list[dict]:
             if result.get("success") and result.get("content"):
                 r["full_content"] = result["content"][:15000]  # Cap at 15k chars
                 r["fetched_title"] = result.get("title", r.get("title", ""))
-                print(f"[Analyzer] ✓ 抓取成功: {url[:60]} ({len(r['full_content'])} 字符)")
+                logger.info("✓ 抓取成功: %s (%s 字符)", url[:60], len(r['full_content']))
             else:
                 r["full_content"] = r.get("snippet", "")
-                print(f"[Analyzer] ✗ 抓取失败: {url[:60]}")
+                logger.error("✗ 抓取失败: %s", url[:60])
         except Exception as e:
             r["full_content"] = r.get("snippet", "")
-            print(f"[Analyzer] ✗ 抓取异常: {url[:60]} - {e}")
+            logger.error("✗ 抓取异常: %s - %s", url[:60], e)
         return r
 
     # Fetch in parallel with concurrency limit

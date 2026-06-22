@@ -9,6 +9,9 @@ from __future__ import annotations
 from typing import Any
 
 from openlearning.agents.state import AgentState
+from openlearning.log import get_logger
+
+logger = get_logger("Memory")
 
 
 async def memory_agent(state: AgentState) -> dict[str, Any]:
@@ -22,7 +25,7 @@ async def memory_agent(state: AgentState) -> dict[str, Any]:
     user_request = state.get("user_request", "")
     knowledge_graph = state.get("knowledge_graph", {})
 
-    print(f"[Memory] 查询用户记忆: {user_id}")
+    logger.info("查询用户记忆: %s", user_id)
 
     # ── Layer 1: Project Memory ──────────────────────────────
     history = await _query_project_history(user_id)
@@ -43,7 +46,7 @@ async def memory_agent(state: AgentState) -> dict[str, Any]:
 
     mastered_count = len(mastery.get("mastered", []))
     learning_count = len(mastery.get("learning", []))
-    print(f"[Memory] 已掌握: {mastered_count}, 学习中: {learning_count}, 缺口: {len(gaps)}")
+    logger.info("已掌握: %s, 学习中: %s, 缺口: %s", mastered_count, learning_count, len(gaps))
 
     return {
         "user_memory": {

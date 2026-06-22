@@ -35,7 +35,8 @@ def calculate_next_review(
     # Minimum interval: 1 day
     interval = max(1, interval)
 
-    next_review = datetime.utcnow() + timedelta(days=interval)
+    from datetime import timezone
+    next_review = datetime.now(timezone.utc) + timedelta(days=interval)
 
     return {
         "next_review": next_review,

@@ -165,9 +165,9 @@ def _check_freshness(resources: list[dict], min_recent_ratio: float = 0.2) -> di
     if not resources:
         return {"pass": False, "reason": "No resources", "recent_ratio": 0.0}
 
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
-    two_years_ago = datetime.utcnow() - timedelta(days=730)
+    two_years_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=730)
     recent_count = 0
     old_count = 0
     unknown_count = 0

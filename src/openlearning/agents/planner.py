@@ -9,6 +9,9 @@ import re
 from typing import Any
 
 from openlearning.agents.state import AgentState
+from openlearning.log import get_logger
+
+logger = get_logger("Planner")
 
 
 async def planner_agent(state: AgentState) -> dict[str, Any]:
@@ -48,7 +51,7 @@ async def planner_agent(state: AgentState) -> dict[str, Any]:
     if gaps and not reflection:
         gap_queries = _generate_gap_queries(gaps, analysis)
         search_queries.extend(gap_queries)
-        print(f"[Planner] Memory 补充 {len(gap_queries)} 条缺口搜索")
+        logger.info("Memory 补充 %s 条缺口搜索", len(gap_queries))
 
     # 4. Build crawl plan
     crawl_plan = _build_crawl_plan(search_queries, analysis)
@@ -243,7 +246,7 @@ def _generate_search_queries(graph: dict, analysis: dict, profile: dict, user_me
             # Filter out subtopics that are already mastered
             subtopics = [s for s in subtopics if not any(mid in s.lower() for mid in mastered_ids)]
             if len(subtopics) < len(analysis.get("subtopics", [])):
-                print(f"[Planner] 跳过 {len(analysis.get('subtopics', [])) - len(subtopics)} 个已掌握子主题")
+                logger.info("跳过 %s 个已掌握子主题", len(analysis.get('subtopics', [])) - len(subtopics))
 
     # 提取英文关键词（用于国际源）
     en_keywords = _extract_english_keywords(topic, subtopics)
