@@ -118,8 +118,8 @@ async def update_mastery(
             review_count = 0
             conn.execute(
                 text("""
-                    INSERT INTO concept_mastery (id, user_id, concept_id, mastery, stability, learned_at)
-                    VALUES (:id, :uid, :cid, 0.0, 1.0, :now)
+                    INSERT INTO concept_mastery (id, user_id, concept_id, mastery, stability, review_count, learned_at, updated_at)
+                    VALUES (:id, :uid, :cid, 0.0, 1.0, 0, :now, :now)
                 """),
                 {"id": f"{user_id}_{concept_id}", "uid": user_id, "cid": concept_id, "now": now},
             )
@@ -290,10 +290,11 @@ async def record_event(
     with engine.begin() as conn:
         from sqlalchemy import text
 
+        now = datetime.utcnow().isoformat()
         conn.execute(
             text("""
-                INSERT INTO learning_events (id, user_id, concept_id, event_type, resource_id, score, time_spent)
-                VALUES (:id, :uid, :cid, :event, :rid, :score, :time)
+                INSERT INTO learning_events (id, user_id, concept_id, event_type, resource_id, score, time_spent, created_at)
+                VALUES (:id, :uid, :cid, :event, :rid, :score, :time, :now)
             """),
             {
                 "id": uuid.uuid4().hex[:12],
@@ -303,6 +304,7 @@ async def record_event(
                 "rid": resource_id,
                 "score": score,
                 "time": time_spent,
+                "now": now,
             },
         )
 
