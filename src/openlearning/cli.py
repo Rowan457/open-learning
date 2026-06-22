@@ -381,8 +381,57 @@ def build(
     project_id: str = typer.Argument(..., help="项目 ID"),
     output: str = typer.Option("./output/", "--output", "-o", help="输出目录"),
 ):
-    """生成静态站点。"""
-    console.print(f"[yellow]Build 命令需要先完成采集流程。请使用 'openlearning collect {project_id}'[/]")
+    """从已有数据重新生成静态站点。"""
+    import asyncio
+    from pathlib import Path
+
+    from openlearning.skills.render import build_learning_system
+
+    data_dir = Path(output) / "data"
+    kg_path = data_dir / "knowledge-graph.json"
+    lp_path = data_dir / "learning-path.json"
+
+    if not kg_path.exists():
+        console.print(f"[red]未找到知识图谱数据: {kg_path}[/]")
+        console.print(f"[yellow]请先运行 'openlearning collect {project_id}'[/]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]重新生成站点...[/]")
+
+    import json
+
+    knowledge_graph = json.loads(kg_path.read_text(encoding="utf-8"))
+    learning_path = json.loads(lp_path.read_text(encoding="utf-8")) if lp_path.exists() else {}
+
+    nodes = knowledge_graph.get("nodes", [])
+    edges = knowledge_graph.get("edges", [])
+    console.print(f"  知识图谱: {len(nodes)} 节点, {len(edges)} 边")
+
+    # Build knowledge resources map from graph data
+    knowledge_resources = {}
+    for node in nodes:
+        concept_id = node.get("id", "")
+        knowledge_resources[concept_id] = []  # Resources are in the graph nodes already
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("生成站点...", total=None)
+        result = asyncio.run(
+            build_learning_system.ainvoke({
+                "knowledge_graph": knowledge_graph,
+                "learning_path": learning_path,
+                "knowledge_resources": knowledge_resources,
+                "output_dir": output,
+            })
+        )
+        progress.update(task, description="生成完成!")
+
+    console.print(f"\n[green]✓[/] 站点已生成: {result.get('site_path', output)}")
+    console.print(f"  页面数: {result.get('pages_generated', 0)}")
+    console.print(f"\n  打开 [bold]{output}/index.html[/] 查看!")
 
 
 @app.command()
