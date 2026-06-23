@@ -79,6 +79,24 @@ async def get_project_detail(project_id: str) -> dict[str, Any]:
     stats = get_project_stats(project_id)
     if not stats:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Enrich with knowledge graph stats if resources table is empty
+    if stats.get("resource_count", 0) == 0:
+        kg = _load_knowledge_graph(project_id)
+        nodes = kg.get("nodes", [])
+        if nodes:
+            stats["resource_count"] = len(nodes)
+            types = {}
+            for n in nodes:
+                t = n.get("type", "concept")
+                types[t] = types.get(t, 0) + 1
+            stats["sources"] = types
+            diffs = {}
+            for n in nodes:
+                d = n.get("difficulty", "intermediate")
+                diffs[d] = diffs.get(d, 0) + 1
+            stats["difficulties"] = diffs
+
     return stats
 
 
