@@ -213,6 +213,133 @@ def record_crawl_task(
         session.add(task)
         session.commit()
         session.refresh(task)
+
+
+# ── Multi-project management ────────────────────────────────
+
+
+def update_project(
+    project_id: str,
+    title: str | None = None,
+    description: str | None = None,
+    status: str | None = None,
+) -> Project | None:
+    """Update project fields. Returns None if not found."""
+    with get_session() as session:
+        project = session.get(Project, project_id)
+        if not project:
+            return None
+        if title is not None:
+            project.title = title
+        if description is not None:
+            project.description = description
+        if status is not None:
+            project.status = status
+        project.updated_at = datetime.utcnow()
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+        return project
+
+
+def delete_project(project_id: str) -> bool:
+    """Delete a project and all its resources. Returns True if deleted."""
+    with get_session() as session:
+        project = session.get(Project, project_id)
+        if not project:
+            return False
+        # Delete related resources
+        resources = session.exec(
+            select(Resource).where(Resource.project_id == project_id)
+        ).all()
+        for r in resources:
+            # Delete quality scores for this resource
+            scores = session.exec(
+                select(QualityScore).where(QualityScore.resource_id == r.id)
+            ).all()
+            for s in scores:
+                session.delete(s)
+            # Delete updates for this resource
+            updates = session.exec(
+                select(Update).where(Update.resource_id == r.id)
+            ).all()
+            for u in updates:
+                session.delete(u)
+            session.delete(r)
+
+        # Delete crawl tasks
+        tasks = session.exec(
+            select(CrawlTask).where(CrawlTask.project_id == project_id)
+        ).all()
+        for t in tasks:
+            session.delete(t)
+
+        session.delete(project)
+        session.commit()
+        return True
+
+
+def get_project_stats(project_id: str) -> dict:
+    """Get aggregated stats for a project."""
+    with get_session() as session:
+        project = session.get(Project, project_id)
+        if not project:
+            return {}
+
+        resources = session.exec(
+            select(Resource).where(Resource.project_id == project_id)
+        ).all()
+
+        resource_count = len(resources)
+        if resource_count == 0:
+            return {
+                "id": project.id,
+                "title": project.title,
+                "status": project.status,
+                "created_at": str(project.created_at)[:19],
+                "updated_at": str(project.updated_at)[:19],
+                "resource_count": 0,
+                "avg_score": 0,
+                "sources": {},
+                "difficulties": {},
+            }
+
+        scores = [r.quality_score for r in resources if r.quality_score]
+        avg_score = sum(scores) / len(scores) if scores else 0
+
+        # Count by source
+        sources: dict[str, int] = {}
+        for r in resources:
+            src = r.source or "unknown"
+            sources[src] = sources.get(src, 0) + 1
+
+        # Count by difficulty
+        difficulties: dict[str, int] = {}
+        for r in resources:
+            diff = r.difficulty or "unknown"
+            difficulties[diff] = difficulties.get(diff, 0) + 1
+
+        return {
+            "id": project.id,
+            "title": project.title,
+            "status": project.status,
+            "created_at": str(project.created_at)[:19],
+            "updated_at": str(project.updated_at)[:19],
+            "resource_count": resource_count,
+            "avg_score": round(avg_score, 1),
+            "sources": sources,
+            "difficulties": difficulties,
+        }
+
+
+def list_projects_with_stats() -> list[dict]:
+    """List all projects with aggregated stats."""
+    projects = list_projects()
+    result = []
+    for p in projects:
+        stats = get_project_stats(p.id)
+        result.append(stats)
+    return result
     return task
 
 

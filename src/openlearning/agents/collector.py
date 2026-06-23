@@ -129,15 +129,17 @@ async def _parallel_collect(
     """Collect resources from multiple sources in parallel.
 
     策略：
-    - 中文查询 → 仅 web search（SerpAPI/Tavily 支持中文）
-    - 英文查询 → 所有源（arXiv/YouTube/GitHub 需要英文）
+    - 中文查询 → web + bilibili + zhihu（中文平台）
+    - 英文查询 → web + arXiv + YouTube + GitHub
     Returns (resources, errors).
     """
     from openlearning.skills.search import (
         arxiv_search,
+        bilibili_search,
         github_search,
         web_search,
         youtube_search,
+        zhihu_search,
     )
 
     tasks = []
@@ -150,10 +152,16 @@ async def _parallel_collect(
     zh_queries = [q for q in queries if _is_chinese(q)][:3]
     en_queries = [q for q in queries if not _is_chinese(q)][:5]
 
-    # 中文查询 → 仅 web search
+    # 中文查询 → web + bilibili + zhihu
     for query in zh_queries:
         tasks.append(_safe_invoke(web_search, {"query": query, "max_results": 15, **extra}))
         task_labels.append(f"web: {query[:30]}")
+
+        tasks.append(_safe_invoke(bilibili_search, {"query": query, "max_results": 15, **extra}))
+        task_labels.append(f"bilibili: {query[:30]}")
+
+        tasks.append(_safe_invoke(zhihu_search, {"query": query, "max_results": 10}))
+        task_labels.append(f"zhihu: {query[:30]}")
 
     # 英文查询 → 所有 4 个源
     for query in en_queries:

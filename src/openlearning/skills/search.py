@@ -358,9 +358,177 @@ async def github_search(
     return results
 
 
+# ── Bilibili Search ──────────────────────────────────────────
+
+class BilibiliInput(BaseModel):
+    query: str = Field(description="搜索关键词")
+    max_results: int = Field(default=20, description="最大结果数")
+    since_days: int | None = Field(default=None, description="只搜索最近 N 天的内容")
+
+
+@tool("bilibili_search", args_schema=BilibiliInput)
+async def bilibili_search(
+    query: str, max_results: int = 20, since_days: int | None = None
+) -> list[dict[str, Any]]:
+    """搜索 Bilibili 视频教程。
+
+    使用 Bilibili 搜索 API (免费，无需 API key)。
+    返回 [{url, title, snippet, author, play_count, duration, published, source}] 列表。
+    """
+    params: dict[str, Any] = {
+        "keyword": query,
+        "search_type": "video",
+        "order": "totalrank",  # 综合排序
+        "page": 1,
+        "page_size": min(max_results, 50),
+    }
+
+    # Bilibili 搜索时间过滤: 0=不限, 1=1天, 7=7天, 30=30天, 182=半年
+    if since_days is not None:
+        if since_days <= 1:
+            params["duration"] = 0
+            params["tids_1"] = 0
+            # 使用 pubtime_begin/pubtime_end 做时间过滤
+            params["pubtime_begin"] = _since_date(since_days).strftime("%Y-%m-%d")
+            params["pubtime_end"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        elif since_days <= 7:
+            params["pubtime_begin"] = _since_date(since_days).strftime("%Y-%m-%d")
+            params["pubtime_end"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        elif since_days <= 30:
+            params["pubtime_begin"] = _since_date(since_days).strftime("%Y-%m-%d")
+            params["pubtime_end"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        else:
+            params["pubtime_begin"] = _since_date(since_days).strftime("%Y-%m-%d")
+            params["pubtime_end"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://search.bilibili.com/",
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            "https://api.bilibili.com/x/web-interface/search/type",
+            params=params,
+            headers=headers,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+    results = []
+    for item in data.get("data", {}).get("result", [])[:max_results]:
+        # Bilibili 返回的 duration 格式: "12:34" 或秒数
+        duration = item.get("duration", "")
+
+        # 发布时间 (时间戳)
+        pubdate = item.get("pubdate", 0)
+        published = ""
+        if pubdate:
+            published = datetime.fromtimestamp(pubdate, tz=timezone.utc).strftime("%Y-%m-%d")
+
+        # 播放量
+        play = item.get("play", 0)
+        if isinstance(play, str):
+            play = int(play.replace(",", "")) if play.replace(",", "").isdigit() else 0
+
+        results.append({
+            "url": f"https://www.bilibili.com/video/{item.get('bvid', '')}",
+            "title": _strip_html(item.get("title", "")),
+            "snippet": _strip_html(item.get("description", ""))[:300],
+            "author": item.get("author", ""),
+            "play_count": play,
+            "duration": duration,
+            "published": published,
+            "source": "bilibili",
+        })
+    return results
+
+
+# ── Zhihu Search ─────────────────────────────────────────────
+
+class ZhihuInput(BaseModel):
+    query: str = Field(description="搜索关键词")
+    max_results: int = Field(default=20, description="最大结果数")
+    search_type: str = Field(default="general", description="搜索类型: general/answer/article")
+
+
+@tool("zhihu_search", args_schema=ZhihuInput)
+async def zhihu_search(
+    query: str, max_results: int = 20, search_type: str = "general"
+) -> list[dict[str, Any]]:
+    """搜索知乎问答和专栏文章。
+
+    使用知乎搜索 API (免费，无需 API key)。
+    返回 [{url, title, snippet, author, voteup_count, source}] 列表。
+    """
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Referer": "https://www.zhihu.com/search",
+    }
+
+    results: list[dict] = []
+
+    # Use Zhihu's search API endpoint
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        # General search (mix of answers and articles)
+        params = {
+            "q": query,
+            "type": "content",
+            "offset": 0,
+            "limit": min(max_results, 20),
+        }
+
+        try:
+            resp = await client.get(
+                "https://www.zhihu.com/api/v4/search_v3",
+                params=params,
+                headers=headers,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            for item in data.get("data", [])[:max_results]:
+                obj = item.get("object", {})
+                item_type = item.get("type", "")
+
+                if item_type in ("answer", "article"):
+                    title = obj.get("question", {}).get("title", "") or obj.get("title", "")
+                    content = obj.get("excerpt", "") or obj.get("content", "")
+                    author = obj.get("author", {}).get("name", "")
+
+                    # URL construction
+                    if item_type == "answer":
+                        q_id = obj.get("question", {}).get("id", "")
+                        a_id = obj.get("id", "")
+                        url = f"https://www.zhihu.com/question/{q_id}/answer/{a_id}"
+                    else:
+                        url = f"https://zhuanlan.zhihu.com/p/{obj.get('id', '')}"
+
+                    results.append({
+                        "url": url,
+                        "title": _strip_html(title),
+                        "snippet": _strip_html(content)[:300],
+                        "author": author,
+                        "voteup_count": obj.get("voteup_count", 0),
+                        "source": "zhihu",
+                    })
+        except httpx.HTTPStatusError:
+            # Fallback: use DuckDuckGo with site:zhihu.com filter
+            return await _duckduckgo_search(f"site:zhihu.com {query}", max_results)
+
+    return results
+
+
+def _strip_html(text: str) -> str:
+    """Remove HTML tags from text."""
+    import re
+    clean = re.sub(r"<[^>]+>", "", text)
+    return clean.strip()
+
+
 # ── Tools Export ─────────────────────────────────────────────
 
-TOOLS = [web_search, arxiv_search, youtube_search, github_search]
+TOOLS = [web_search, arxiv_search, youtube_search, github_search, bilibili_search, zhihu_search]
 
 
 def get_tools() -> list:

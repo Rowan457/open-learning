@@ -46,6 +46,14 @@ def _select_tools(task: str, context: dict) -> dict:
         tools = ["web_search"]
         params = [{"query": f"{topic} tutorial", "max_results": 15}]
 
+        # Chinese sources for Chinese topics
+        has_chinese = any("一" <= c <= "鿿" for c in topic)
+        if has_chinese:
+            tools.append("bilibili_search")
+            params.append({"query": topic, "max_results": 15})
+            tools.append("zhihu_search")
+            params.append({"query": topic, "max_results": 10})
+
         if "paper" in str(context).lower() or "arxiv" in str(context).lower():
             tools.append("arxiv_search")
             params.append({"query": topic, "max_results": 10})

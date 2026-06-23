@@ -273,3 +273,47 @@ next:
 
 ### 测试
 - test_exporters.py: Markdown 结构 / Anki 格式 / CSV 列 / 辅助函数
+
+---
+
+## phase(8): 中文数据源 + 多项目管理 ✓
+
+**日期**: 2026-06-23
+
+### Bilibili 视频采集器
+- `bilibili_search` 工具: 搜索 Bilibili 视频教程
+- 使用 Bilibili 搜索 API (免费，无需 API key)
+- 返回: url / title / snippet / author / play_count / duration / published
+- 支持 `since_days` 时间过滤 (pubtime_begin/pubtime_end)
+- HTML 标签自动清理
+
+### 知乎问答采集器
+- `zhihu_search` 工具: 搜索知乎问答和专栏文章
+- 使用知乎搜索 API (免费，无需 API key)
+- 返回: url / title / snippet / author / voteup_count
+- 支持 answer 和 article 两种类型
+- URL 自动构建 (question/answer 或 zhuanlan)
+- 失败时回退到 DuckDuckGo site:zhihu.com
+
+### Collector Agent 集成
+- 中文查询路由: web + bilibili + zhihu
+- 英文查询路由: web + arXiv + YouTube + GitHub (不变)
+- 工具路由器自动识别中文主题，添加 bilibili/zhihu
+
+### 多项目管理
+- `openlearning project-update` — 更新标题/描述
+- `openlearning project-archive` — 归档项目 (保留数据)
+- `openlearning project-activate` — 激活已归档项目
+- `openlearning project-delete` — 删除项目 (需确认)
+- `openlearning project-compare` — 对比多个项目数据
+- `list_projects` 增强: 显示资源数/平均质量/来源分布
+
+### 数据库新增函数
+- `update_project()` — 更新项目字段
+- `delete_project()` — 级联删除项目及关联数据
+- `get_project_stats()` — 项目聚合统计
+- `list_projects_with_stats()` — 带统计的项目列表
+
+### 测试
+- test_search_cn.py: Bilibili/知乎搜索 (mock HTTP)
+- test_project_mgmt.py: 项目 CRUD / 统计 / 归档流程

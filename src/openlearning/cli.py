@@ -171,10 +171,10 @@ def _chat_collect_info(initial_topic: str = "") -> dict:
 @app.command()
 def list_projects():
     """列出所有学习项目。"""
-    from openlearning.database import init_db, list_projects as db_list
+    from openlearning.database import init_db, list_projects_with_stats
 
     init_db()
-    projects = db_list()
+    projects = list_projects_with_stats()
 
     if not projects:
         console.print("[yellow]暂无项目。使用 'openlearning init' 创建。[/]")
@@ -184,10 +184,25 @@ def list_projects():
     table.add_column("ID", style="dim")
     table.add_column("标题", style="bold")
     table.add_column("状态")
-    table.add_column("创建时间")
+    table.add_column("资源数", justify="right")
+    table.add_column("平均质量", justify="right")
+    table.add_column("更新时间")
 
     for p in projects:
-        table.add_row(p.id, p.title, p.status, str(p.created_at)[:19])
+        status_style = {
+            "active": "green",
+            "paused": "yellow",
+            "archived": "dim",
+        }.get(p.get("status", ""), "white")
+
+        table.add_row(
+            p.get("id", ""),
+            p.get("title", ""),
+            f"[{status_style}]{p.get('status', '')}[/]",
+            str(p.get("resource_count", 0)),
+            f"{p.get('avg_score', 0):.1f}",
+            p.get("updated_at", "")[:10],
+        )
 
     console.print(table)
 
@@ -216,6 +231,146 @@ def status(project_id: str = typer.Argument(..., help="项目 ID")):
         scores = [r.quality_score for r in resources if r.quality_score]
         avg = sum(scores) / len(scores) if scores else 0
         console.print(f"  平均质量: {avg:.1f}/10")
+
+    # Show source distribution
+    if resources:
+        from collections import Counter
+        sources = Counter(r.source for r in resources)
+        diffs = Counter(r.difficulty for r in resources if r.difficulty)
+        console.print(f"\n  来源分布: {dict(sources)}")
+        if diffs:
+            console.print(f"  难度分布: {dict(diffs)}")
+
+
+@app.command("project-update")
+def project_update(
+    project_id: str = typer.Argument(..., help="项目 ID"),
+    title: Optional[str] = typer.Option(None, "--title", "-t", help="新标题"),
+    description: Optional[str] = typer.Option(None, "--desc", "-d", help="新描述"),
+):
+    """更新项目信息 (标题/描述)。"""
+    from openlearning.database import init_db, update_project
+
+    init_db()
+
+    if not title and not description:
+        console.print("[yellow]请指定 --title 或 --desc 来更新项目[/]")
+        raise typer.Exit(1)
+
+    project = update_project(project_id, title=title, description=description)
+    if not project:
+        console.print(f"[red]未找到项目: {project_id}[/]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/] 项目已更新: [bold]{project.title}[/]")
+    if title:
+        console.print(f"  标题: {title}")
+    if description:
+        console.print(f"  描述: {description}")
+
+
+@app.command("project-archive")
+def project_archive(
+    project_id: str = typer.Argument(..., help="项目 ID"),
+):
+    """归档项目 (暂停更新，保留数据)。"""
+    from openlearning.database import init_db, update_project
+
+    init_db()
+    project = update_project(project_id, status="archived")
+    if not project:
+        console.print(f"[red]未找到项目: {project_id}[/]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/] 项目已归档: [bold]{project.title}[/]")
+    console.print("[dim]归档项目不会被删除，可随时恢复[/]")
+
+
+@app.command("project-activate")
+def project_activate(
+    project_id: str = typer.Argument(..., help="项目 ID"),
+):
+    """激活已归档的项目。"""
+    from openlearning.database import init_db, update_project
+
+    init_db()
+    project = update_project(project_id, status="active")
+    if not project:
+        console.print(f"[red]未找到项目: {project_id}[/]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]✓[/] 项目已激活: [bold]{project.title}[/]")
+
+
+@app.command("project-delete")
+def project_delete(
+    project_id: str = typer.Argument(..., help="项目 ID"),
+    confirm: bool = typer.Option(False, "--yes", "-y", help="跳过确认"),
+):
+    """删除项目及其所有资源 (不可恢复)。"""
+    from openlearning.database import get_project, init_db, delete_project
+
+    init_db()
+    project = get_project(project_id)
+    if not project:
+        console.print(f"[red]未找到项目: {project_id}[/]")
+        raise typer.Exit(1)
+
+    if not confirm:
+        console.print(f"[bold red]⚠ 警告:[/] 即将删除项目 '[bold]{project.title}[/]' 及其所有资源")
+        console.print("[dim]此操作不可恢复！[/]")
+        if not typer.confirm("确认删除?"):
+            console.print("[yellow]已取消[/]")
+            raise typer.Exit(0)
+
+    delete_project(project_id)
+    console.print(f"[green]✓[/] 项目已删除: {project.title}")
+
+
+@app.command("project-compare")
+def project_compare(
+    project_ids: str = typer.Argument(..., help="项目 ID (逗号分隔)"),
+):
+    """对比多个项目的数据。"""
+    from openlearning.database import get_project_stats, init_db
+
+    init_db()
+    ids = [pid.strip() for pid in project_ids.split(",") if pid.strip()]
+
+    if len(ids) < 2:
+        console.print("[yellow]请提供至少 2 个项目 ID (逗号分隔)[/]")
+        raise typer.Exit(1)
+
+    table = Table(title="项目对比")
+    table.add_column("指标", style="bold")
+    for pid in ids:
+        table.add_column(pid[:8], justify="center")
+
+    # Collect stats
+    all_stats = []
+    for pid in ids:
+        stats = get_project_stats(pid)
+        if not stats:
+            console.print(f"[red]未找到项目: {pid}[/]")
+            raise typer.Exit(1)
+        all_stats.append(stats)
+
+    # Add rows
+    table.add_row("标题", *[s.get("title", "")[:12] for s in all_stats])
+    table.add_row("状态", *[s.get("status", "") for s in all_stats])
+    table.add_row("资源数", *[str(s.get("resource_count", 0)) for s in all_stats])
+    table.add_row("平均质量", *[f"{s.get('avg_score', 0):.1f}" for s in all_stats])
+    table.add_row("创建时间", *[s.get("created_at", "")[:10] for s in all_stats])
+
+    # Source distribution
+    all_sources = set()
+    for s in all_stats:
+        all_sources.update(s.get("sources", {}).keys())
+    for src in sorted(all_sources):
+        counts = [str(s.get("sources", {}).get(src, 0)) for s in all_stats]
+        table.add_row(f"  {src}", *counts)
+
+    console.print(table)
 
 
 # ── Resource Collection ──────────────────────────────────────
