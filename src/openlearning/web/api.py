@@ -383,9 +383,12 @@ async def get_concept_detail(project_id: str, concept_id: str) -> dict[str, Any]
         if e.get("type") == "related"
     ]
 
-    # Find resources
+    # Find resources (from knowledge_resources map or node references)
     all_resources = _load_knowledge_resources(project_id)
-    resources = all_resources.get(concept_id, [])[:5]
+    resources = all_resources.get(concept_id, [])
+    # Also include node's own references (saved during collection)
+    if not resources:
+        resources = node.get("references", [])
 
     return {
         "node": node,
@@ -401,7 +404,7 @@ async def get_concept_detail(project_id: str, concept_id: str) -> dict[str, Any]
             {"id": r["node"]["id"], "name": r["node"]["name"], "reason": r["edge"].get("reason", ""), "weight": r["edge"].get("weight", 1.0)}
             for r in related if r["node"]
         ],
-        "resources": resources,
+        "resources": resources[:5],
     }
 
 

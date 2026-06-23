@@ -115,15 +115,26 @@ async def _enrich_node(
     concept_type = node.get("type", "concept")
     concept_id = node.get("id", "")
 
-    # Gather context from matched resources
+    # Gather context from matched resources and save references
     matched = knowledge_resources.get(concept_id, [])
     resource_contexts = []
-    for r in matched[:3]:
+    references = []
+    for r in matched[:5]:
         ctx = r.get("summary", "") or r.get("one_line_summary", "")
         if not ctx:
             ctx = r.get("snippet", "")
         if ctx:
             resource_contexts.append(f"- {r.get('title', '')}: {ctx[:300]}")
+        if r.get("url"):
+            references.append({
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "source": r.get("source", ""),
+                "quality_score": r.get("quality_score", 0),
+            })
+
+    # Save references to node
+    node["references"] = references
 
     resources_text = "\n".join(resource_contexts) if resource_contexts else "无可用资源"
 
