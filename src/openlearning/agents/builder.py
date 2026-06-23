@@ -35,24 +35,23 @@ async def builder_agent(state: AgentState) -> dict[str, Any]:
     # 3. Generate personalized learning path
     learning_path = _generate_learning_path(enriched_graph, memory)
 
-    # 4. Build the learning system site
-    site_result = await _build_site(enriched_graph, learning_path, knowledge_resources)
+    # 4. Persist learning system to database
+    await _persist_to_db(state, enriched_graph, learning_path, knowledge_resources)
 
-    # 4. Save project for future memory
+    # 5. Save project for future memory
     await _save_project(state)
 
-    # 5. Record learning events for concepts
+    # 6. Record learning events for concepts
     user_profile = state.get("user_profile", {})
     user_id = user_profile.get("user_id", "default")
     await _record_learning_events(user_id, enriched_graph)
 
     return {
         "learning_system": {
-            "site_path": site_result.get("site_path", ""),
             "knowledge_graph": enriched_graph,
             "learning_path": learning_path,
             "knowledge_resources": knowledge_resources,
-            "pages_generated": site_result.get("pages_generated", 0),
+            "persisted": True,
         },
         "knowledge_graph": enriched_graph,
         "current_agent": "builder",
@@ -304,24 +303,38 @@ def _match_resources_to_concepts(graph: dict, resources: list[dict]) -> dict[str
     return mapping
 
 
-async def _build_site(graph: dict, path: dict, resources: dict) -> dict:
-    """Build the learning system site."""
+async def _persist_to_db(
+    state: dict,
+    graph: dict,
+    path: dict,
+    resources: dict,
+) -> None:
+    """Persist learning system data to database."""
     try:
-        from openlearning.skills.render import build_learning_system
+        from openlearning.database import save_learning_system, get_project
 
-        result = await build_learning_system.ainvoke({
-            "knowledge_graph": graph,
-            "learning_path": path,
-            "knowledge_resources": resources,
-            "output_dir": "./output/",
-        })
-        logger.info("站点生成: %s 页", result.get('pages_generated', 0))
-        return result
+        # Find or create project
+        user_request = state.get("user_request", "Untitled")
+        projects = __import__("openlearning.database", fromlist=["list_projects"]).list_projects()
+        project_id = None
+        for p in projects:
+            if p.title == user_request:
+                project_id = p.id
+                break
+
+        if not project_id:
+            # Will be created by _save_project
+            pass
+        else:
+            save_learning_system(
+                project_id=project_id,
+                knowledge_graph=graph,
+                learning_path=path,
+                knowledge_resources=resources,
+            )
+            logger.info("学习系统已持久化到数据库 (project: %s)", project_id)
     except Exception as e:
-        import traceback
-        logger.error("✗ 站点生成失败: %s", e)
-        traceback.print_exc()
-        return {"error": str(e), "site_path": "", "pages_generated": 0}
+        logger.error("✗ 数据库持久化失败: %s", e)
 
 
 async def _save_project(state: AgentState) -> None:

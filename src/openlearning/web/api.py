@@ -30,6 +30,7 @@ from openlearning.database import (
     get_project,
     get_project_stats,
     get_resources_by_project,
+    get_session,
     init_db,
     list_projects_with_stats,
     update_project,
@@ -216,6 +217,232 @@ async def export_project(
 
     elif format == "json":
         return knowledge_graph
+
+
+# ── Knowledge Graph API (for Vue frontend) ──────────────────
+
+
+def _load_knowledge_graph(project_id: str) -> dict[str, Any]:
+    """Load knowledge graph for a project (DB → JSON file fallback)."""
+    # 1. Try learning_systems table
+    from openlearning.database import get_learning_system
+
+    ls = get_learning_system(project_id)
+    if ls and ls.get("knowledge_graph", {}).get("nodes"):
+        return ls["knowledge_graph"]
+
+    # 2. Fallback: JSON file
+    from pathlib import Path
+    import json
+
+    kg_path = Path("output/data/knowledge-graph.json")
+    if kg_path.exists():
+        return json.loads(kg_path.read_text(encoding="utf-8"))
+
+    # 3. Fallback: build from concepts table
+    from openlearning.models import Concept, ConceptRelation
+    from sqlmodel import select
+
+    with get_session() as session:
+        concepts = session.exec(select(Concept)).all()
+        relations = session.exec(select(ConceptRelation)).all()
+
+    nodes = [
+        {
+            "id": c.id,
+            "name": c.name,
+            "type": c.type,
+            "difficulty": c.difficulty or "beginner",
+            "importance": c.importance,
+            "definition": c.definition or "",
+        }
+        for c in concepts
+    ]
+    edges = [
+        {
+            "from": r.from_id,
+            "to": r.to_id,
+            "type": r.type,
+            "weight": r.weight,
+            "reason": r.reason or "",
+        }
+        for r in relations
+    ]
+    return {"nodes": nodes, "edges": edges}
+
+
+def _load_knowledge_resources(project_id: str) -> dict[str, Any]:
+    """Load knowledge resources mapping (DB → JSON file fallback)."""
+    from openlearning.database import get_learning_system
+
+    ls = get_learning_system(project_id)
+    if ls and ls.get("knowledge_resources"):
+        return ls["knowledge_resources"]
+
+    from pathlib import Path
+    import json
+
+    res_path = Path("output/data/knowledge-resources.json")
+    if res_path.exists():
+        return json.loads(res_path.read_text(encoding="utf-8"))
+    return {}
+
+
+def _load_learning_path(project_id: str) -> dict[str, Any]:
+    """Load learning path (DB → JSON file fallback)."""
+    # 1. Try learning_systems table
+    from openlearning.database import get_learning_system
+
+    ls = get_learning_system(project_id)
+    if ls and ls.get("learning_path", {}).get("steps"):
+        return ls["learning_path"]
+
+    # 2. Fallback: JSON file
+    from pathlib import Path
+    import json
+
+    lp_path = Path("output/data/learning-path.json")
+    if lp_path.exists():
+        return json.loads(lp_path.read_text(encoding="utf-8"))
+    return {"phases": [], "steps": []}
+
+
+@api_router.get("/projects/{project_id}/graph")
+async def get_knowledge_graph(project_id: str) -> dict[str, Any]:
+    """Get knowledge graph (nodes + edges) for Vue frontend."""
+    init_db()
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    graph = _load_knowledge_graph(project_id)
+    return {
+        "topic": project.title,
+        "nodes": graph.get("nodes", []),
+        "edges": graph.get("edges", []),
+    }
+
+
+@api_router.get("/projects/{project_id}/learning-path")
+async def get_learning_path(project_id: str) -> dict[str, Any]:
+    """Get learning path for Vue frontend."""
+    init_db()
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    lp = _load_learning_path(project_id)
+    graph = _load_knowledge_graph(project_id)
+
+    # Enrich steps with node data
+    nodes_by_id = {n["id"]: n for n in graph.get("nodes", [])}
+    enriched_steps = []
+    for step in lp.get("steps", []):
+        node = nodes_by_id.get(step.get("concept", ""), {})
+        enriched_steps.append({
+            **step,
+            "name": node.get("name", step.get("concept", "")),
+            "difficulty": node.get("difficulty", ""),
+            "importance": node.get("importance", 0.5),
+        })
+
+    return {
+        "phases": lp.get("phases", []),
+        "steps": enriched_steps,
+        "total_steps": len(enriched_steps),
+    }
+
+
+@api_router.get("/projects/{project_id}/concepts")
+async def list_concepts(project_id: str) -> list[dict[str, Any]]:
+    """List all concepts for a project (for index page)."""
+    init_db()
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    graph = _load_knowledge_graph(project_id)
+    nodes = graph.get("nodes", [])
+    return [
+        {
+            "id": n.get("id", ""),
+            "name": n.get("name", ""),
+            "type": n.get("type", "concept"),
+            "difficulty": n.get("difficulty", "intermediate"),
+            "importance": n.get("importance", 0.5),
+            "definition": (n.get("definition", "") or "")[:200],
+        }
+        for n in nodes
+    ]
+
+
+@api_router.get("/projects/{project_id}/concepts/{concept_id}")
+async def get_concept_detail(project_id: str, concept_id: str) -> dict[str, Any]:
+    """Get concept detail with related edges and resources."""
+    init_db()
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    graph = _load_knowledge_graph(project_id)
+    nodes = graph.get("nodes", [])
+    edges = graph.get("edges", [])
+
+    # Find the concept node
+    node = None
+    for n in nodes:
+        if n["id"] == concept_id:
+            node = n
+            break
+
+    if not node:
+        raise HTTPException(status_code=404, detail="Concept not found")
+
+    # Find related edges
+    related_edges = [e for e in edges if e.get("from") == concept_id or e.get("to") == concept_id]
+    prereqs = [
+        {"edge": e, "node": _find_node(nodes, e["from"])}
+        for e in related_edges
+        if e.get("type") == "prerequisite" and e.get("to") == concept_id
+    ]
+    extends = [
+        {"edge": e, "node": _find_node(nodes, e["to"])}
+        for e in related_edges
+        if e.get("type") == "prerequisite" and e.get("from") == concept_id
+    ]
+    related = [
+        {"edge": e, "node": _find_node(nodes, e["to"] if e.get("from") == concept_id else e["from"])}
+        for e in related_edges
+        if e.get("type") == "related"
+    ]
+
+    # Find resources
+    all_resources = _load_knowledge_resources(project_id)
+    resources = all_resources.get(concept_id, [])[:5]
+
+    return {
+        "node": node,
+        "prerequisites": [
+            {"id": p["node"]["id"], "name": p["node"]["name"], "reason": p["edge"].get("reason", ""), "weight": p["edge"].get("weight", 1.0)}
+            for p in prereqs if p["node"]
+        ],
+        "extends": [
+            {"id": e["node"]["id"], "name": e["node"]["name"], "reason": e["edge"].get("reason", ""), "weight": e["edge"].get("weight", 1.0)}
+            for e in extends if e["node"]
+        ],
+        "related": [
+            {"id": r["node"]["id"], "name": r["node"]["name"], "reason": r["edge"].get("reason", ""), "weight": r["edge"].get("weight", 1.0)}
+            for r in related if r["node"]
+        ],
+        "resources": resources,
+    }
+
+
+def _find_node(nodes: list[dict], node_id: str) -> dict | None:
+    for n in nodes:
+        if n["id"] == node_id:
+            return n
+    return None
 
 
 # ── Plugin Endpoints ────────────────────────────────────────

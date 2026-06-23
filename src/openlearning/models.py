@@ -246,3 +246,19 @@ class ResourceInteraction(SQLModel, table=True):
     rating: Optional[float] = None  # 1-5
     time_spent: Optional[int] = None  # seconds
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ── Learning System (persisted builder output) ────────────────
+
+class LearningSystem(SQLModel, table=True):
+    """Persisted learning system data (knowledge graph + learning path + resources)."""
+
+    __tablename__ = "learning_systems"
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    project_id: str = Field(foreign_key="projects.id", unique=True)
+    knowledge_graph_json: Optional[str] = None  # JSON: {nodes, edges, topic}
+    learning_path_json: Optional[str] = None     # JSON: {steps, phases}
+    resources_json: Optional[str] = None         # JSON: {concept_id: [resources]}
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)

@@ -14,6 +14,7 @@ from openlearning.models import (
     ConceptRelation,
     CrawlTask,
     LearningEvent,
+    LearningSystem,
     Project,
     QualityScore,
     Resource,
@@ -340,7 +341,65 @@ def list_projects_with_stats() -> list[dict]:
         stats = get_project_stats(p.id)
         result.append(stats)
     return result
-    return task
+
+
+# ── Learning System persistence ───────────────────────────────
+
+
+def save_learning_system(
+    project_id: str,
+    knowledge_graph: dict,
+    learning_path: dict,
+    knowledge_resources: dict | None = None,
+) -> LearningSystem:
+    """Save or update a learning system for a project."""
+    import json
+
+    with get_session() as session:
+        existing = session.exec(
+            select(LearningSystem).where(LearningSystem.project_id == project_id)
+        ).first()
+
+        if existing:
+            existing.knowledge_graph_json = json.dumps(knowledge_graph, ensure_ascii=False)
+            existing.learning_path_json = json.dumps(learning_path, ensure_ascii=False)
+            existing.resources_json = json.dumps(knowledge_resources or {}, ensure_ascii=False)
+            existing.updated_at = datetime.utcnow()
+            session.add(existing)
+            session.commit()
+            session.refresh(existing)
+            return existing
+
+        ls = LearningSystem(
+            project_id=project_id,
+            knowledge_graph_json=json.dumps(knowledge_graph, ensure_ascii=False),
+            learning_path_json=json.dumps(learning_path, ensure_ascii=False),
+            resources_json=json.dumps(knowledge_resources or {}, ensure_ascii=False),
+        )
+        session.add(ls)
+        session.commit()
+        session.refresh(ls)
+        return ls
+
+
+def get_learning_system(project_id: str) -> dict | None:
+    """Get the learning system data for a project. Returns None if not found."""
+    import json
+
+    with get_session() as session:
+        ls = session.exec(
+            select(LearningSystem).where(LearningSystem.project_id == project_id)
+        ).first()
+        if not ls:
+            return None
+
+        return {
+            "knowledge_graph": json.loads(ls.knowledge_graph_json) if ls.knowledge_graph_json else {},
+            "learning_path": json.loads(ls.learning_path_json) if ls.learning_path_json else {},
+            "knowledge_resources": json.loads(ls.resources_json) if ls.resources_json else {},
+            "created_at": str(ls.created_at)[:19],
+            "updated_at": str(ls.updated_at)[:19],
+        }
 
 
 # select is already imported at the top
