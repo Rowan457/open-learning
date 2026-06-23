@@ -126,7 +126,7 @@ a:hover { text-decoration: underline; }
     flex: 1;
     padding: 32px;
     min-height: 100vh;
-    max-width: 1200px;
+    width: 100%;
 }
 
 /* ── Cards ──────────────────────────────────────────────── */
@@ -493,7 +493,9 @@ tr:hover td {
     min-height: 500px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: white;
+    background: #fafbfc;
+    background-image: radial-gradient(circle, #e5e7eb 1px, transparent 1px);
+    background-size: 20px 20px;
 }
 
 .graph-toolbar {
@@ -541,13 +543,16 @@ tr:hover td {
     padding: 16px;
     font-size: 12px;
     z-index: 50;
+    max-width: 180px;
 }
 
 .graph-legend h4 {
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
-    margin-bottom: 10px;
-    color: var(--text);
+    margin-bottom: 8px;
+    color: var(--text-light);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
 .graph-legend-item {
@@ -559,10 +564,11 @@ tr:hover td {
 }
 
 .graph-legend-dot {
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
     flex-shrink: 0;
+    display: inline-block;
 }
 
 .graph-legend-line {

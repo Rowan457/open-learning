@@ -314,22 +314,35 @@ const GraphPage = {
             <select v-model="layout" class="layout-select">
                 <option value="breadthfirst">层次布局</option>
                 <option value="cose">力导向</option>
+                <option value="concentric">同心圆</option>
                 <option value="circle">环形</option>
                 <option value="grid">网格</option>
             </select>
-            <button class="btn btn-outline btn-sm" @click="fit">适应画布</button>
+            <div style="display:flex;gap:4px">
+                <button class="btn btn-outline btn-sm" @click="zoomOut">−</button>
+                <button class="btn btn-outline btn-sm" @click="fit">适应</button>
+                <button class="btn btn-outline btn-sm" @click="zoomIn">+</button>
+            </div>
+            <span style="color:var(--text-muted);font-size:12px">{{ graphStats.nodes }} 节点 · {{ graphStats.edges }} 关系</span>
         </div>
         <div v-if="hasData">
             <div ref="cyEl" class="graph-container"></div>
             <div class="graph-legend">
-                <h4>图例</h4>
+                <h4>节点类型</h4>
                 <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#3B82F6"></span>概念</div>
                 <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#F59E0B"></span>技术</div>
                 <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#10B981"></span>原理</div>
                 <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#8B5CF6"></span>实践</div>
                 <div style="border-top:1px solid var(--border);margin:8px 0"></div>
-                <div class="graph-legend-item"><span class="graph-legend-line" style="background:#94A3B8"></span>相关</div>
-                <div class="graph-legend-item"><span class="graph-legend-line" style="background:#EF4444;border-top:2px dashed #EF4444;height:0"></span>前置</div>
+                <h4>难度边框</h4>
+                <div class="graph-legend-item"><span class="graph-legend-dot" style="border:3px solid #10B981;background:transparent"></span>入门</div>
+                <div class="graph-legend-item"><span class="graph-legend-dot" style="border:3px solid #F59E0B;background:transparent"></span>进阶</div>
+                <div class="graph-legend-item"><span class="graph-legend-dot" style="border:3px solid #EF4444;background:transparent"></span>高级</div>
+                <div style="border-top:1px solid var(--border);margin:8px 0"></div>
+                <h4>关系类型</h4>
+                <div class="graph-legend-item"><span class="graph-legend-line" style="background:#CBD5E1"></span>相关</div>
+                <div class="graph-legend-item"><span class="graph-legend-line" style="background:#F87171;border-top:2px dashed #F87171;height:0"></span>前置</div>
+                <div style="margin-top:8px;font-size:11px;color:var(--text-muted)">节点越大 = 重要度越高</div>
             </div>
         </div>
         <div v-else class="empty-state">
@@ -353,8 +366,10 @@ const GraphPage = {
         const layout = ref('breadthfirst')
         const tip = ref({ show: false, x: 0, y: 0, title: '', meta: '', def: '' })
         const hasData = ref(false)
+        const graphStats = ref({ nodes: 0, edges: 0 })
         let cy = null
         const TC = { concept: '#3B82F6', technology: '#F59E0B', principle: '#10B981', practice: '#8B5CF6', project: '#EC4899', application: '#06B6D4' }
+        const DC = { beginner: '#10B981', intermediate: '#F59E0B', advanced: '#EF4444' }
 
         async function load() {
             const pid = route.params.projectId
@@ -366,6 +381,7 @@ const GraphPage = {
                 currentProject.value = project
                 if (data.nodes && data.nodes.length) {
                     hasData.value = true
+                    graphStats.value = { nodes: data.nodes.length, edges: data.edges.length }
                     await nextTick()
                     init(data.nodes, data.edges)
                 }
@@ -382,33 +398,104 @@ const GraphPage = {
         }
 
         function build(nodes, edges) {
+            const nodeIds = new Set(nodes.map(n => n.id))
+            const validEdges = edges.filter(e => nodeIds.has(e.from) && nodeIds.has(e.to))
+            // Compute in-degree for node sizing
+            const inDeg = {}
+            validEdges.forEach(e => { inDeg[e.to] = (inDeg[e.to] || 0) + 1 })
+            const maxDeg = Math.max(1, ...Object.values(inDeg))
+
             cy = cytoscape({
                 container: cyEl.value,
                 elements: [
-                    ...nodes.map(n => ({ data: { id: n.id, label: n.name, type: n.type, difficulty: n.difficulty, def: (n.definition || '').substring(0, 100) } })),
-                    ...edges.map(e => ({ data: { source: e.from, target: e.to, type: e.type, weight: e.weight, reason: e.reason || '' } })),
+                    ...nodes.map(n => {
+                        const imp = n.importance || 0.5
+                        const deg = inDeg[n.id] || 0
+                        const size = 30 + imp * 30 + (deg / maxDeg) * 15
+                        return { data: { id: n.id, label: n.name, type: n.type, difficulty: n.difficulty, importance: imp, def: (n.definition || '').substring(0, 120), size } }
+                    }),
+                    ...validEdges.map(e => ({ data: { source: e.from, target: e.to, type: e.type, weight: e.weight || 1, reason: e.reason || '' } })),
                 ],
                 style: [
-                    { selector: 'node', style: { label: 'data(label)', 'background-color': el => TC[el.data('type')] || '#3B82F6', color: '#fff', 'text-valign': 'center', 'font-size': '11px', width: 40, height: 40, 'text-wrap': 'ellipsis', 'text-max-width': '80px', 'border-width': 2, 'border-color': 'rgba(255,255,255,0.3)' } },
-                    { selector: 'node.highlighted', style: { 'border-width': 3, 'border-color': '#EF4444', width: 52, height: 52, 'font-size': '13px' } },
-                    { selector: 'node.dimmed', style: { opacity: 0.15 } },
-                    { selector: 'edge', style: { width: 1.5, 'line-color': '#94A3B8', 'target-arrow-color': '#94A3B8', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier' } },
-                    { selector: 'edge[type="prerequisite"]', style: { 'line-color': '#EF4444', 'target-arrow-color': '#EF4444', 'line-style': 'dashed', width: 2 } },
-                    { selector: 'edge.dimmed', style: { opacity: 0.08 } },
+                    { selector: 'node', style: {
+                        label: 'data(label)',
+                        'background-color': el => TC[el.data('type')] || '#3B82F6',
+                        color: '#fff',
+                        'text-valign': 'bottom',
+                        'text-margin-y': 6,
+                        'font-size': '11px',
+                        'font-weight': '600',
+                        width: 'data(size)',
+                        height: 'data(size)',
+                        'text-wrap': 'ellipsis',
+                        'text-max-width': '90px',
+                        'border-width': 3,
+                        'border-color': el => DC[el.data('difficulty')] || '#94A3B8',
+                        'background-opacity': 0.9,
+                    }},
+                    { selector: 'node:active', style: { 'overlay-opacity': 0 } },
+                    { selector: 'node.highlighted', style: {
+                        'border-width': 4,
+                        'border-color': '#F59E0B',
+                        'background-opacity': 1,
+                        'font-size': '13px',
+                        'z-index': 999,
+                    }},
+                    { selector: 'node.dimmed', style: { opacity: 0.1 } },
+                    { selector: 'edge', style: {
+                        width: el => 1 + (el.data('weight') || 1) * 0.5,
+                        'line-color': '#CBD5E1',
+                        'target-arrow-color': '#CBD5E1',
+                        'target-arrow-shape': 'triangle',
+                        'arrow-scale': 0.8,
+                        'curve-style': 'bezier',
+                        opacity: 0.6,
+                    }},
+                    { selector: 'edge[type="prerequisite"]', style: {
+                        'line-color': '#F87171',
+                        'target-arrow-color': '#F87171',
+                        'line-style': 'dashed',
+                        width: 2,
+                        opacity: 0.7,
+                    }},
+                    { selector: 'edge.highlighted', style: {
+                        'line-color': '#F59E0B',
+                        'target-arrow-color': '#F59E0B',
+                        opacity: 1,
+                        width: 3,
+                    }},
+                    { selector: 'edge.dimmed', style: { opacity: 0.05 } },
                 ],
-                layout: { name: 'breadthfirst', directed: true, spacingFactor: 1.5 },
-                minZoom: 0.3, maxZoom: 3,
+                layout: { name: 'breadthfirst', directed: true, spacingFactor: 1.6, padding: 30 },
+                minZoom: 0.2, maxZoom: 4,
+                wheelSensitivity: 0.3,
             })
-            cy.on('tap', 'node', e => router.push('/projects/' + route.params.projectId + '/concepts/' + e.target.id()))
+
+            // Hover: highlight neighbors
             cy.on('mouseover', 'node', e => {
-                const d = e.target.data()
-                tip.value = { show: true, x: 0, y: 0, title: d.label, meta: d.type + ' · ' + d.difficulty, def: d.def || '' }
+                const node = e.target
+                const neighborhood = node.closedNeighborhood()
+                cy.elements().addClass('dimmed')
+                neighborhood.removeClass('dimmed')
+                node.addClass('highlighted')
+                neighborhood.edges().addClass('highlighted')
+                const d = node.data()
+                tip.value = { show: true, x: 0, y: 0, title: d.label, meta: d.type + ' · ' + d.difficulty + ' · 重要度 ' + (d.importance || 0.5).toFixed(1), def: d.def || '' }
             })
             cy.on('mousemove', e => { tip.value.x = e.originalEvent.clientX + 15; tip.value.y = e.originalEvent.clientY + 15 })
-            cy.on('mouseout', 'node', () => { tip.value.show = false })
+            cy.on('mouseout', 'node', () => {
+                cy.elements().removeClass('dimmed highlighted')
+                tip.value.show = false
+            })
+            cy.on('tap', 'node', e => router.push('/projects/' + route.params.projectId + '/concepts/' + e.target.id()))
+
+            // Background click to reset
+            cy.on('tap', e => { if (e.target === cy) cy.elements().removeClass('dimmed highlighted') })
         }
 
-        function fit() { if (cy) cy.fit(undefined, 30) }
+        function fit() { if (cy) cy.fit(undefined, 40) }
+        function zoomIn() { if (cy) cy.zoom({ level: cy.zoom() * 1.3, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } }) }
+        function zoomOut() { if (cy) cy.zoom({ level: cy.zoom() / 1.3, renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 } }) }
 
         watch(q, v => {
             if (!cy) return
@@ -424,7 +511,7 @@ const GraphPage = {
         watch(layout, v => { if (cy) cy.layout({ name: v, directed: v === 'breadthfirst', spacingFactor: 1.5, animate: true }).run() })
 
         onMounted(load)
-        return { cyEl, q, layout, tip, hasData, fit }
+        return { cyEl, q, layout, tip, hasData, graphStats, fit, zoomIn, zoomOut }
     },
 }
 
