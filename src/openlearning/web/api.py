@@ -151,7 +151,6 @@ async def trigger_collection(project_id: str) -> dict[str, Any]:
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Run collection in background
     try:
         from openlearning.agents.graph import run_pipeline
 
@@ -161,10 +160,19 @@ async def trigger_collection(project_id: str) -> dict[str, Any]:
             max_iterations=2,
         )
 
+        # Persist collected data to database
+        kg = result.get("knowledge_graph", {})
+        lp = result.get("learning_system", {}).get("learning_path", {})
+        kr = result.get("learning_system", {}).get("knowledge_resources", {})
+
+        if kg.get("nodes"):
+            from openlearning.database import save_learning_system
+            save_learning_system(project_id, kg, lp, kr)
+
         return {
             "status": "completed",
             "resources_collected": len(result.get("analyzed_resources", [])),
-            "knowledge_graph_nodes": len(result.get("knowledge_graph", {}).get("nodes", [])),
+            "knowledge_graph_nodes": len(kg.get("nodes", [])),
         }
     except Exception as e:
         return {

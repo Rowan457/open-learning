@@ -291,8 +291,19 @@ const ProjectDetailPage = {
 
         async function collect() {
             collecting.value = true
-            try { await api.post('/projects/' + route.params.projectId + '/collect', {}); await load() }
-            finally { collecting.value = false }
+            try {
+                const r = await api.post('/projects/' + route.params.projectId + '/collect', {})
+                if (r.status === 'completed') {
+                    alert('采集完成！\n资源: ' + r.resources_collected + '\n知识节点: ' + r.knowledge_graph_nodes)
+                } else {
+                    alert('采集失败: ' + (r.error || '未知错误'))
+                }
+                await load()
+            } catch (e) {
+                alert('采集请求失败: ' + e.message)
+            } finally {
+                collecting.value = false
+            }
         }
 
         function exportMd() { window.open('/api/projects/' + route.params.projectId + '/export?format=markdown') }
@@ -420,7 +431,7 @@ const GraphPage = {
                     { selector: 'node', style: {
                         label: 'data(label)',
                         'background-color': el => TC[el.data('type')] || '#3B82F6',
-                        color: '#fff',
+                        color: '#1a1a2e',
                         'text-valign': 'bottom',
                         'text-margin-y': 6,
                         'font-size': '11px',
@@ -432,6 +443,8 @@ const GraphPage = {
                         'border-width': 3,
                         'border-color': el => DC[el.data('difficulty')] || '#94A3B8',
                         'background-opacity': 0.9,
+                        'text-outline-color': '#fff',
+                        'text-outline-width': 2,
                     }},
                     { selector: 'node:active', style: { 'overlay-opacity': 0 } },
                     { selector: 'node.highlighted', style: {

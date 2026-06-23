@@ -493,9 +493,7 @@ tr:hover td {
     min-height: 500px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    background: #fafbfc;
-    background-image: radial-gradient(circle, #e5e7eb 1px, transparent 1px);
-    background-size: 20px 20px;
+    background: #fff;
 }
 
 .graph-toolbar {
