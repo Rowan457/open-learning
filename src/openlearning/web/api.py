@@ -187,18 +187,11 @@ async def export_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Load knowledge graph
-    from pathlib import Path
-    import json
+    knowledge_graph = _load_knowledge_graph(project_id)
+    learning_path = _load_learning_path(project_id)
 
-    kg_path = Path("output/data/knowledge-graph.json")
-    lp_path = Path("output/data/learning-path.json")
-
-    if not kg_path.exists():
-        raise HTTPException(status_code=404, detail="Knowledge graph not found. Run collect first.")
-
-    knowledge_graph = json.loads(kg_path.read_text(encoding="utf-8"))
-    learning_path = json.loads(lp_path.read_text(encoding="utf-8")) if lp_path.exists() else {}
+    if not knowledge_graph.get("nodes"):
+        raise HTTPException(status_code=404, detail="No knowledge graph data for this project. Run collect first.")
 
     if format == "markdown":
         from openlearning.exporters import export_markdown
@@ -223,87 +216,35 @@ async def export_project(
 
 
 def _load_knowledge_graph(project_id: str) -> dict[str, Any]:
-    """Load knowledge graph for a project (DB → JSON file fallback)."""
-    # 1. Try learning_systems table
+    """Load knowledge graph for a specific project."""
     from openlearning.database import get_learning_system
 
     ls = get_learning_system(project_id)
     if ls and ls.get("knowledge_graph", {}).get("nodes"):
         return ls["knowledge_graph"]
 
-    # 2. Fallback: JSON file
-    from pathlib import Path
-    import json
-
-    kg_path = Path("output/data/knowledge-graph.json")
-    if kg_path.exists():
-        return json.loads(kg_path.read_text(encoding="utf-8"))
-
-    # 3. Fallback: build from concepts table
-    from openlearning.models import Concept, ConceptRelation
-    from sqlmodel import select
-
-    with get_session() as session:
-        concepts = session.exec(select(Concept)).all()
-        relations = session.exec(select(ConceptRelation)).all()
-
-    nodes = [
-        {
-            "id": c.id,
-            "name": c.name,
-            "type": c.type,
-            "difficulty": c.difficulty or "beginner",
-            "importance": c.importance,
-            "definition": c.definition or "",
-        }
-        for c in concepts
-    ]
-    edges = [
-        {
-            "from": r.from_id,
-            "to": r.to_id,
-            "type": r.type,
-            "weight": r.weight,
-            "reason": r.reason or "",
-        }
-        for r in relations
-    ]
-    return {"nodes": nodes, "edges": edges}
+    return {"nodes": [], "edges": [], "topic": ""}
 
 
 def _load_knowledge_resources(project_id: str) -> dict[str, Any]:
-    """Load knowledge resources mapping (DB → JSON file fallback)."""
+    """Load knowledge resources mapping for a specific project."""
     from openlearning.database import get_learning_system
 
     ls = get_learning_system(project_id)
     if ls and ls.get("knowledge_resources"):
         return ls["knowledge_resources"]
 
-    from pathlib import Path
-    import json
-
-    res_path = Path("output/data/knowledge-resources.json")
-    if res_path.exists():
-        return json.loads(res_path.read_text(encoding="utf-8"))
     return {}
 
 
 def _load_learning_path(project_id: str) -> dict[str, Any]:
-    """Load learning path (DB → JSON file fallback)."""
-    # 1. Try learning_systems table
+    """Load learning path for a specific project."""
     from openlearning.database import get_learning_system
 
     ls = get_learning_system(project_id)
     if ls and ls.get("learning_path", {}).get("steps"):
         return ls["learning_path"]
 
-    # 2. Fallback: JSON file
-    from pathlib import Path
-    import json
-
-    lp_path = Path("output/data/learning-path.json")
-    if lp_path.exists():
-        return json.loads(lp_path.read_text(encoding="utf-8"))
     return {"phases": [], "steps": []}
 
 

@@ -319,21 +319,29 @@ const GraphPage = {
             </select>
             <button class="btn btn-outline btn-sm" @click="fit">适应画布</button>
         </div>
-        <div ref="cyEl" class="graph-container"></div>
+        <div v-if="hasData">
+            <div ref="cyEl" class="graph-container"></div>
+            <div class="graph-legend">
+                <h4>图例</h4>
+                <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#3B82F6"></span>概念</div>
+                <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#F59E0B"></span>技术</div>
+                <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#10B981"></span>原理</div>
+                <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#8B5CF6"></span>实践</div>
+                <div style="border-top:1px solid var(--border);margin:8px 0"></div>
+                <div class="graph-legend-item"><span class="graph-legend-line" style="background:#94A3B8"></span>相关</div>
+                <div class="graph-legend-item"><span class="graph-legend-line" style="background:#EF4444;border-top:2px dashed #EF4444;height:0"></span>前置</div>
+            </div>
+        </div>
+        <div v-else class="empty-state">
+            <div class="icon">🗺️</div>
+            <p>暂无知识图谱数据</p>
+            <p style="font-size:13px;margin-top:8px">请先对此项目执行"采集新资源"</p>
+            <router-link :to="'/projects/' + $route.params.projectId" class="btn btn-primary" style="margin-top:16px">返回项目详情</router-link>
+        </div>
         <div v-show="tip.show" class="graph-tooltip" :style="{ left: tip.x+'px', top: tip.y+'px' }">
             <div class="tooltip-title">{{ tip.title }}</div>
             <div class="tooltip-meta">{{ tip.meta }}</div>
             <div class="tooltip-def" v-if="tip.def">{{ tip.def }}</div>
-        </div>
-        <div class="graph-legend">
-            <h4>图例</h4>
-            <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#3B82F6"></span>概念</div>
-            <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#F59E0B"></span>技术</div>
-            <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#10B981"></span>原理</div>
-            <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#8B5CF6"></span>实践</div>
-            <div style="border-top:1px solid var(--border);margin:8px 0"></div>
-            <div class="graph-legend-item"><span class="graph-legend-line" style="background:#94A3B8"></span>相关</div>
-            <div class="graph-legend-item"><span class="graph-legend-line" style="background:#EF4444;border-top:2px dashed #EF4444;height:0"></span>前置</div>
         </div>
     </div>
     `,
@@ -344,16 +352,23 @@ const GraphPage = {
         const q = ref('')
         const layout = ref('breadthfirst')
         const tip = ref({ show: false, x: 0, y: 0, title: '', meta: '', def: '' })
+        const hasData = ref(false)
         let cy = null
         const TC = { concept: '#3B82F6', technology: '#F59E0B', principle: '#10B981', practice: '#8B5CF6', project: '#EC4899', application: '#06B6D4' }
 
         async function load() {
             const pid = route.params.projectId
             try {
-                const data = await api.get('/projects/' + pid + '/graph')
-                currentProject.value = { id: pid, title: data.topic || '知识图谱' }
-                await nextTick()
-                init(data.nodes, data.edges)
+                const [project, data] = await Promise.all([
+                    api.get('/projects/' + pid),
+                    api.get('/projects/' + pid + '/graph'),
+                ])
+                currentProject.value = project
+                if (data.nodes && data.nodes.length) {
+                    hasData.value = true
+                    await nextTick()
+                    init(data.nodes, data.edges)
+                }
             } catch (e) { console.error(e) }
         }
 
@@ -409,7 +424,7 @@ const GraphPage = {
         watch(layout, v => { if (cy) cy.layout({ name: v, directed: v === 'breadthfirst', spacingFactor: 1.5, animate: true }).run() })
 
         onMounted(load)
-        return { cyEl, q, layout, tip, fit }
+        return { cyEl, q, layout, tip, hasData, fit }
     },
 }
 
@@ -417,7 +432,7 @@ const GraphPage = {
 
 const LearningPathPage = {
     template: `
-    <div v-if="pd">
+    <div v-if="pd && pd.total_steps">
         <h1 class="page-title">{{ projectTitle }} — 学习路径</h1>
         <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -444,6 +459,12 @@ const LearningPathPage = {
                 </div>
             </div>
         </div>
+    </div>
+    <div v-else-if="pd && !pd.total_steps" class="empty-state">
+        <div class="icon">📚</div>
+        <p>暂无学习路径数据</p>
+        <p style="font-size:13px;margin-top:8px">请先对此项目执行"采集新资源"</p>
+        <router-link :to="'/projects/' + $route.params.projectId" class="btn btn-primary" style="margin-top:16px">返回项目详情</router-link>
     </div>
     <div v-else class="loading"><div class="spinner"></div><p>加载中...</p></div>
 `,

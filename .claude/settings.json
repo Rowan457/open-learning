@@ -4,7 +4,9 @@
       "Bash(.venv/../../../.venv/Scripts/python.exe -m http.server 8080)",
       "Bash(D:/project/open_learning/.venv/Scripts/python.exe -m http.server 8080)",
       "Bash(D:/project/open_learning/.venv/Scripts/python.exe -m ensurepip)",
-      "Bash(D:/project/open_learning/.venv/Scripts/python.exe -m pip install fastapi uvicorn)"
+      "Bash(D:/project/open_learning/.venv/Scripts/python.exe -m pip install fastapi uvicorn)",
+      "Bash(curl -s http://127.0.0.1:8080/api/projects/70e0dcd1676a/graph)",
+      "Bash(D:/project/open_learning/.venv/Scripts/python.exe -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('nodes:', len\\(d.get\\('nodes',[]\\)\\), 'edges:', len\\(d.get\\('edges',[]\\)\\)\\)\")"
     ]
   }
 }
