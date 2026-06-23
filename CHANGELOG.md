@@ -317,3 +317,40 @@ next:
 ### 测试
 - test_search_cn.py: Bilibili/知乎搜索 (mock HTTP)
 - test_project_mgmt.py: 项目 CRUD / 统计 / 归档流程
+
+---
+
+## phase(9): 插件系统 ✓
+
+**日期**: 2026-06-23
+
+### 插件架构
+- `BaseCollector` 抽象基类: 定义 search/fetch/validate_config 接口
+- `SearchResult` 标准化数据类: 统一结果格式，支持 extra 扩展字段
+- `PluginMeta` 元数据类: name/version/description/author/source_type
+
+### PluginManager 管理器
+- 目录扫描: 自动发现 plugins/ 目录下的 .py 文件和包
+- YAML 配置: plugins.yaml 驱动的启用/禁用和自定义配置
+- 热重载: reload() 重新扫描并加载所有插件
+- 批量搜索: search_all() 并发搜索所有启用的插件
+- 配置持久化: enable/disable 自动保存到 plugins.yaml
+
+### 插件模板
+- `openlearning plugin create <name>` — 生成插件模板文件
+- 模板包含完整的 search() 方法骨架和 validate_config() 示例
+- 自动验证插件名称格式 (小写字母+下划线)
+
+### CLI 命令
+- `openlearning plugin list` — 列出所有插件 (名称/版本/描述/状态)
+- `openlearning plugin enable <name>` — 启用插件
+- `openlearning plugin disable <name>` — 禁用插件
+- `openlearning plugin create <name>` — 创建插件模板
+- `openlearning plugin reload` — 重新加载所有插件
+
+### 示例插件
+- plugins/example_rss.py — RSS 订阅源采集器示例
+- 演示如何使用 httpx 抓取 RSS 并解析 XML
+
+### 测试
+- test_plugins.py: SearchResult / BaseCollector / PluginManager / YAML 配置
