@@ -418,7 +418,7 @@ const GraphPage = {
 const LearningPathPage = {
     template: `
     <div v-if="pd">
-        <h1 class="page-title">学习路径</h1>
+        <h1 class="page-title">{{ projectTitle }} — 学习路径</h1>
         <div class="card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
                 <span style="font-weight:500">学习进度</span>
@@ -446,12 +446,13 @@ const LearningPathPage = {
         </div>
     </div>
     <div v-else class="loading"><div class="spinner"></div><p>加载中...</p></div>
-    `,
+`,
     setup() {
         const route = useRoute()
         const pd = ref(null)
         const prog = ref({})
         const exp = ref({})
+        const projectTitle = ref('学习路径')
         const pid = computed(() => route.params.projectId)
         const done = computed(() => Object.keys(prog.value).length)
         const pct = computed(() => Math.round(done.value / (pd.value?.total_steps || 1) * 100))
@@ -483,15 +484,21 @@ const LearningPathPage = {
         }
 
         async function load() {
+            const p = route.params.projectId
             try {
-                pd.value = await api.get('/projects/' + route.params.projectId + '/learning-path')
-                currentProject.value = { id: route.params.projectId, title: '学习路径' }
+                const [project, pathData] = await Promise.all([
+                    api.get('/projects/' + p),
+                    api.get('/projects/' + p + '/learning-path'),
+                ])
+                pd.value = pathData
+                projectTitle.value = project.title || '学习路径'
+                currentProject.value = project
                 prog.value = JSON.parse(localStorage.getItem('ol_progress') || '{}')
             } catch (e) { console.error(e) }
         }
 
         onMounted(load)
-        return { pd, prog, exp, pid, done, pct, groups, dv, toggle, toggleStep }
+        return { pd, prog, exp, pid, projectTitle, done, pct, groups, dv, toggle, toggleStep }
     },
 }
 
