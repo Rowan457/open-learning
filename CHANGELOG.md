@@ -354,3 +354,45 @@ next:
 
 ### 测试
 - test_plugins.py: SearchResult / BaseCollector / PluginManager / YAML 配置
+
+---
+
+## phase(10): Web UI 管理面板 ✓
+
+**日期**: 2026-06-23
+
+### FastAPI Web 服务
+- `create_app()` 工厂函数: 创建 FastAPI 应用
+- 静态文件挂载: /site/ 路由到生成的站点
+- 自动 API 文档: /api/docs (Swagger UI)
+
+### 前端页面
+- **仪表盘** (`/`): 项目数/资源数/插件数/平均质量统计卡片，最近项目列表
+- **项目管理** (`/projects`): 项目列表表格，新建/删除操作
+- **项目详情** (`/projects/{id}`): 资源统计，资源列表，采集/导出按钮
+- **插件管理** (`/plugins`): 插件列表，启用/禁用/重新加载
+- 内联 CSS + JS，无外部依赖，暗色导航栏
+
+### REST API 端点
+- `GET /api/projects` — 列出所有项目
+- `POST /api/projects` — 创建项目
+- `GET /api/projects/{id}` — 项目详情
+- `PUT /api/projects/{id}` — 更新项目
+- `DELETE /api/projects/{id}` — 删除项目
+- `GET /api/projects/{id}/resources` — 资源列表
+- `POST /api/projects/{id}/collect` — 触发采集
+- `GET /api/projects/{id}/export` — 导出项目
+- `GET /api/plugins` — 插件列表
+- `PUT /api/plugins/{name}/enable` — 启用插件
+- `PUT /api/plugins/{name}/disable` — 禁用插件
+- `POST /api/plugins/reload` — 重新加载插件
+
+### CLI 命令
+- `openlearning web` — 启动 Web 管理面板
+- 支持 `--port`/`--host`/`--reload` 参数
+
+### 依赖
+- 新增 fastapi + uvicorn
+
+### 测试
+- test_web.py: 健康检查 / 项目 CRUD / 资源 API / 插件 API / 导出 API

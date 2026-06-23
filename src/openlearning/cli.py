@@ -1046,6 +1046,35 @@ def config_set(
     console.print(f"[yellow]配置修改功能开发中。请直接编辑 openlearning.yaml 或设置环境变量。[/]")
 
 
+# ── Web UI ───────────────────────────────────────────────────
+
+@app.command()
+def web(
+    port: int = typer.Option(8080, "--port", "-p", help="端口"),
+    host: str = typer.Option("127.0.0.1", "--host", "-h", help="监听地址"),
+    reload: bool = typer.Option(False, "--reload", help="开发模式 (热重载)"),
+):
+    """启动 Web 管理面板。"""
+    try:
+        import uvicorn
+    except ImportError:
+        console.print("[red]请先安装 uvicorn: pip install uvicorn[/]")
+        raise typer.Exit(1)
+
+    console.print(Panel("[bold blue]OpenLearning Web UI[/]", subtitle="管理面板"))
+    console.print(f"  地址: http://{host}:{port}")
+    console.print(f"  API:  http://{host}:{port}/api/docs")
+    console.print("\n按 Ctrl+C 停止\n")
+
+    uvicorn.run(
+        "openlearning.web.app:create_app",
+        host=host,
+        port=port,
+        reload=reload,
+        factory=True,
+    )
+
+
 # ── Version ──────────────────────────────────────────────────
 
 @app.command()
