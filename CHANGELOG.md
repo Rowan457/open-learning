@@ -237,3 +237,39 @@ next:
 ### 新增 Bookmarks 页面
 - 收藏管理 (查看/移除/清空)
 - 空状态引导
+
+---
+
+## phase(7): 导出功能 ✓
+
+**日期**: 2026-06-23
+
+### Markdown 导出 (exporters.py)
+- 结构化学习笔记: 目录 / 概念总览 / 详细笔记
+- 按难度分组 (入门/基础/进阶)
+- 概念详情: 定义 / 详解 / 关键要点 / 示例 / 常见误区 / 学习建议
+- 前置知识 / 进阶方向 / 相关概念 (含 edge reason)
+- 推荐资源链接
+- 学习路径章节 (可选)
+
+### Anki 卡片导出
+- 6 种卡片类型: 定义 / 解释摘要 / 关键要点 / 常见误区 / 前置知识 / 进阶方向
+- Tab 分隔格式，可直接导入 Anki
+- 自动按难度打标签 (beginner/intermediate/advanced)
+- deck 头部格式 (#deck:名称)
+
+### CSV 导出
+- 概念元数据表格: id / name / type / difficulty / importance
+- 前置知识 / 进阶方向列
+- 关键要点计数 / 是否有示例
+
+### CLI 更新
+- `openlearning export <id> --format markdown` — Markdown 学习笔记
+- `openlearning export <id> --format anki` — Anki 卡片
+- `openlearning export <id> --format csv` — CSV 表格
+- `openlearning export <id> --format json` — 知识图谱 JSON
+- 支持 `--output` 自定义输出路径
+- 显示导出统计 (卡片数/行数)
+
+### 测试
+- test_exporters.py: Markdown 结构 / Anki 格式 / CSV 列 / 辅助函数

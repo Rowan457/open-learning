@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 from typing import Optional
@@ -400,8 +401,6 @@ def build(
 
     console.print(f"[bold]重新生成站点...[/]")
 
-    import json
-
     knowledge_graph = json.loads(kg_path.read_text(encoding="utf-8"))
     learning_path = json.loads(lp_path.read_text(encoding="utf-8")) if lp_path.exists() else {}
 
@@ -579,38 +578,99 @@ def update_watch(
 @app.command()
 def export(
     project_id: str = typer.Argument(..., help="项目 ID"),
-    format: str = typer.Option("markdown", "--format", "-f", help="格式: markdown/json/anki"),
+    format: str = typer.Option("markdown", "--format", "-f", help="格式: markdown/anki/csv/json"),
+    output: str = typer.Option("", "--output", "-o", help="输出文件路径 (默认: output/exports/<project_id>.<ext>)"),
 ):
-    """导出项目数据。"""
-    from openlearning.database import get_resources_by_project, init_db
+    """导出项目数据为 Markdown 笔记 / Anki 卡片 / CSV。"""
+    from openlearning.database import get_project, init_db
 
     init_db()
-    resources = get_resources_by_project(project_id)
+    project = get_project(project_id)
 
-    if not resources:
-        console.print("[yellow]项目无资源可导出[/]")
-        return
+    if not project:
+        console.print(f"[red]未找到项目: {project_id}[/]")
+        raise typer.Exit(1)
 
-    output_dir = Path("output/exports")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Load knowledge graph from data files
+    data_dir = Path("output/data")
+    kg_path = data_dir / "knowledge-graph.json"
+    lp_path = data_dir / "learning-path.json"
 
-    if format == "json":
-        import json
+    if not kg_path.exists():
+        console.print(f"[red]未找到知识图谱数据: {kg_path}[/]")
+        console.print("[yellow]请先运行 'openlearning collect' 采集资源[/]")
+        raise typer.Exit(1)
 
-        path = output_dir / f"{project_id}.json"
-        data = [{"title": r.title, "url": r.url, "score": r.quality_score} for r in resources]
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-    elif format == "markdown":
-        path = output_dir / f"{project_id}.md"
-        lines = ["# OpenLearning Resources\n"]
-        for r in resources:
-            lines.append(f"## {r.title}\n- URL: {r.url}\n- Score: {r.quality_score:.1f}\n")
-        path.write_text("\n".join(lines), encoding="utf-8")
-    else:
+    knowledge_graph = json.loads(kg_path.read_text(encoding="utf-8"))
+    learning_path = json.loads(lp_path.read_text(encoding="utf-8")) if lp_path.exists() else {}
+
+    nodes = knowledge_graph.get("nodes", [])
+    if not nodes:
+        console.print("[yellow]知识图谱为空，无法导出[/]")
+        raise typer.Exit(1)
+
+    # Determine output path
+    ext_map = {"markdown": "md", "anki": "txt", "csv": "csv", "json": "json"}
+    if format not in ext_map:
         console.print(f"[red]不支持的格式: {format}[/]")
-        return
+        console.print(f"[dim]可用格式: {', '.join(ext_map.keys())}[/]")
+        raise typer.Exit(1)
 
-    console.print(f"[green]✓[/] 已导出 {len(resources)} 条资源到 {path}")
+    out_path = Path(output) if output else Path(f"output/exports/{project_id}.{ext_map[format]}")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    console.print(f"[bold]导出 {format.upper()} — {project.title}[/]")
+    console.print(f"  概念数: {len(nodes)}")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("生成导出文件...", total=None)
+
+        if format == "markdown":
+            from openlearning.exporters import export_markdown
+            content = export_markdown(
+                knowledge_graph=knowledge_graph,
+                learning_path=learning_path,
+                project_title=project.title,
+            )
+            out_path.write_text(content, encoding="utf-8")
+
+        elif format == "anki":
+            from openlearning.exporters import export_anki
+            content = export_anki(
+                knowledge_graph=knowledge_graph,
+                deck_name=project.title,
+            )
+            out_path.write_text(content, encoding="utf-8")
+
+        elif format == "csv":
+            from openlearning.exporters import export_csv
+            content = export_csv(knowledge_graph=knowledge_graph)
+            out_path.write_text(content, encoding="utf-8")
+
+        elif format == "json":
+            out_path.write_text(
+                json.dumps(knowledge_graph, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+
+        progress.update(task, description="导出完成!")
+
+    # Stats
+    if format == "anki":
+        card_count = content.count("\n")  # rough count
+        console.print(f"  卡片数: ~{card_count}")
+    elif format == "markdown":
+        line_count = content.count("\n")
+        console.print(f"  行数: {line_count}")
+
+    console.print(f"\n[green]✓[/] 已导出到 [bold]{out_path}[/]")
+
+    if format == "anki":
+        console.print("\n[dim]导入方法: Anki → 文件 → 导入 → 选择文本文件 → 分隔符选 Tab[/]")
 
 
 # ── Config ───────────────────────────────────────────────────
