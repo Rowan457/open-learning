@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/../../../.venv/Scripts/python.exe -m http.server 8080)",
+      "Bash(D:/project/open_learning/.venv/Scripts/python.exe -m http.server 8080)",
+      "Bash(D:/project/open_learning/.venv/Scripts/python.exe -m ensurepip)",
+      "Bash(D:/project/open_learning/.venv/Scripts/python.exe -m pip install fastapi uvicorn)"
+    ]
+  }
+}

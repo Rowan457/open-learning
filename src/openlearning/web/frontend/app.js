@@ -1,12 +1,12 @@
-import { createApp, ref, computed, onMounted, watch } from 'vue'
-import { createRouter, createWebHistory, useRouter, useRoute } from 'vue-router'
+const { createApp, ref, computed, onMounted, watch, nextTick } = Vue
+const { createRouter, createWebHistory, useRouter, useRoute } = VueRouter
 
 // ── API Helper ───────────────────────────────────────────────
 
 const api = {
     async get(path) {
         const r = await fetch('/api' + path)
-        if (!r.ok) throw new Error(`API error: ${r.status}`)
+        if (!r.ok) throw new Error('API ' + r.status)
         return r.json()
     },
     async post(path, body) {
@@ -18,12 +18,10 @@ const api = {
         return r.json()
     },
     async put(path) {
-        const r = await fetch('/api' + path, { method: 'PUT' })
-        return r.json()
+        return (await fetch('/api' + path, { method: 'PUT' })).json()
     },
     async del(path) {
-        const r = await fetch('/api' + path, { method: 'DELETE' })
-        return r.json()
+        return (await fetch('/api' + path, { method: 'DELETE' })).json()
     },
 }
 
@@ -31,96 +29,104 @@ const api = {
 
 const currentProject = ref(null)
 const projects = ref([])
+const sidebarOpen = ref(false)
 
 async function loadProjects() {
-    try {
-        projects.value = await api.get('/projects')
-    } catch (e) {
-        console.error('Failed to load projects:', e)
-    }
+    try { projects.value = await api.get('/projects') }
+    catch (e) { console.error('loadProjects:', e) }
 }
 
-// ── Components ───────────────────────────────────────────────
+// ── Navbar Component ─────────────────────────────────────────
 
 const Navbar = {
     template: `
-    <nav class="sidebar">
+    <aside class="sidebar" :class="{ open: sidebarOpen }">
         <div class="brand">OpenLearning</div>
-        <nav>
-            <router-link to="/">仪表盘</router-link>
-            <router-link to="/projects">项目管理</router-link>
+        <div class="sidebar-nav">
+            <router-link to="/" @click="close">📊 仪表盘</router-link>
+            <router-link to="/projects" @click="close">📁 项目管理</router-link>
+            <router-link to="/bookmarks" @click="close">⭐ 我的收藏</router-link>
             <template v-if="currentProject">
                 <div class="nav-divider"></div>
-                <div class="nav-project-title">{{ currentProject.title }}</div>
-                <router-link :to="'/projects/' + currentProject.id + '/graph'">知识图谱</router-link>
-                <router-link :to="'/projects/' + currentProject.id + '/learning-path'">学习路径</router-link>
-                <router-link :to="'/projects/' + currentProject.id + '/concepts'">知识列表</router-link>
+                <div class="nav-project-title">当前项目</div>
+                <router-link :to="'/projects/' + currentProject.id" @click="close">📋 项目详情</router-link>
+                <router-link :to="'/projects/' + currentProject.id + '/graph'" @click="close">🗺️ 知识图谱</router-link>
+                <router-link :to="'/projects/' + currentProject.id + '/learning-path'" @click="close">📚 学习路径</router-link>
+                <router-link :to="'/projects/' + currentProject.id + '/concepts'" @click="close">📖 知识列表</router-link>
             </template>
-        </nav>
-        <div class="project-info" v-if="currentProject">
-            当前项目: {{ currentProject.title }}
         </div>
-    </nav>
+        <div class="project-info" v-if="currentProject">
+            {{ currentProject.title }}
+        </div>
+    </aside>
     `,
     setup() {
-        return { currentProject }
+        function close() { sidebarOpen.value = false }
+        return { currentProject, sidebarOpen, close }
     },
 }
+
+// ── StatCard Component ───────────────────────────────────────
 
 const StatCard = {
     props: ['value', 'label', 'color'],
     template: `
     <div class="card stat-card">
-        <div class="value" :style="{ color: color || 'var(--primary)' }">{{ displayValue }}</div>
+        <div class="value" :style="color ? { color } : {}">{{ display }}</div>
         <div class="label">{{ label }}</div>
     </div>
     `,
-    computed: {
-        displayValue() {
-            if (typeof this.value === 'number') {
-                return Number.isInteger(this.value) ? this.value : this.value.toFixed(1)
-            }
-            return this.value ?? '-'
-        },
+    setup(props) {
+        const display = computed(() => {
+            if (typeof props.value === 'number') return Number.isInteger(props.value) ? props.value : props.value.toFixed(1)
+            return props.value ?? '-'
+        })
+        return { display }
     },
 }
 
+// ── Badge Component ──────────────────────────────────────────
+
 const Badge = {
     props: ['text', 'variant'],
-    template: `<span class="badge" :class="'badge-' + (variant || 'gray')">{{ text }}</span>`,
+    template: '<span class="badge" :class="cls">{{ text }}</span>',
+    setup(props) {
+        const cls = computed(() => 'badge-' + (props.variant || 'gray'))
+        return { cls }
+    },
 }
+
+// ── NodeCard Component ───────────────────────────────────────
 
 const NodeCard = {
     props: ['node'],
     template: `
-    <div class="card node-card" @click="$router.push('/projects/' + projectId + '/concepts/' + node.id)">
+    <div class="card node-card" @click="go">
         <div class="node-header">
             <span class="node-name">{{ node.name }}</span>
             <span class="stars">{{ stars }}</span>
         </div>
         <div class="node-meta">
             <badge :text="node.type" variant="blue" />
-            <badge :text="node.difficulty" :variant="diffVariant" />
+            <badge :text="node.difficulty" :variant="dv" />
         </div>
         <div class="node-definition" v-if="node.definition">{{ node.definition }}</div>
     </div>
     `,
     setup(props) {
         const route = useRoute()
-        const projectId = computed(() => route.params.projectId || '')
+        const router = useRouter()
         const stars = computed(() => {
             const s = Math.round((props.node.importance || 0.5) * 5)
             return '★'.repeat(s) + '☆'.repeat(5 - s)
         })
-        const diffVariant = computed(() => {
-            const map = { beginner: 'green', intermediate: 'yellow', advanced: 'red' }
-            return map[props.node.difficulty] || 'gray'
-        })
-        return { projectId, stars, diffVariant }
+        const dv = computed(() => ({ beginner: 'green', intermediate: 'yellow', advanced: 'red' })[props.node.difficulty] || 'gray')
+        function go() { router.push('/projects/' + route.params.projectId + '/concepts/' + props.node.id) }
+        return { stars, dv, go }
     },
 }
 
-// ── Pages ────────────────────────────────────────────────────
+// ── Dashboard Page ───────────────────────────────────────────
 
 const DashboardPage = {
     template: `
@@ -128,60 +134,61 @@ const DashboardPage = {
         <h1 class="page-title">仪表盘</h1>
         <div class="stats-grid">
             <stat-card :value="projects.length" label="项目数" />
-            <stat-card :value="totalResources" label="资源总数" />
-            <stat-card :value="avgScore" label="平均质量" />
+            <stat-card :value="totalRes" label="资源总数" />
+            <stat-card :value="avg" label="平均质量" />
         </div>
         <div class="card">
             <h2>最近项目</h2>
             <table>
-                <thead><tr><th>ID</th><th>标题</th><th>状态</th><th>资源数</th><th>操作</th></tr></thead>
+                <thead><tr><th>ID</th><th>标题</th><th>状态</th><th>资源</th><th>操作</th></tr></thead>
                 <tbody>
-                    <tr v-for="p in projects.slice(0, 5)" :key="p.id">
-                        <td style="color:#888">{{ p.id.slice(0,8) }}</td>
-                        <td><router-link :to="'/projects/' + p.id">{{ p.title }}</router-link></td>
-                        <td><badge :text="p.status" :variant="statusVariant(p.status)" /></td>
+                    <tr v-for="p in projects.slice(0,10)" :key="p.id">
+                        <td style="color:var(--text-muted)">{{ p.id.slice(0,8) }}</td>
+                        <td><router-link :to="'/projects/'+p.id">{{ p.title }}</router-link></td>
+                        <td><badge :text="p.status" :variant="sv(p.status)" /></td>
                         <td>{{ p.resource_count || 0 }}</td>
-                        <td><router-link :to="'/projects/' + p.id" class="btn btn-primary btn-sm">查看</router-link></td>
+                        <td><router-link :to="'/projects/'+p.id" class="btn btn-primary btn-sm">查看</router-link></td>
                     </tr>
-                    <tr v-if="!projects.length"><td colspan="5" class="empty-state">暂无项目</td></tr>
+                    <tr v-if="!projects.length"><td colspan="5" class="empty-state">暂无项目，去项目管理创建</td></tr>
                 </tbody>
             </table>
         </div>
     </div>
     `,
     setup() {
-        const totalResources = computed(() => projects.value.reduce((s, p) => s + (p.resource_count || 0), 0))
-        const avgScore = computed(() => {
+        const totalRes = computed(() => projects.value.reduce((s, p) => s + (p.resource_count || 0), 0))
+        const avg = computed(() => {
             const scored = projects.value.filter(p => p.avg_score)
-            if (!scored.length) return '-'
-            return (scored.reduce((s, p) => s + p.avg_score, 0) / scored.length).toFixed(1)
+            return scored.length ? (scored.reduce((s, p) => s + p.avg_score, 0) / scored.length).toFixed(1) : '-'
         })
-        const statusVariant = (s) => ({ active: 'green', archived: 'gray', paused: 'yellow' }[s] || 'gray')
+        const sv = s => ({ active: 'green', archived: 'gray', paused: 'yellow' })[s] || 'gray'
         onMounted(loadProjects)
-        return { projects, totalResources, avgScore, statusVariant }
+        return { projects, totalRes, avg, sv }
     },
 }
+
+// ── Projects Page ────────────────────────────────────────────
 
 const ProjectsPage = {
     template: `
     <div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px">
             <h1 class="page-title" style="margin:0">项目管理</h1>
-            <button class="btn btn-primary" @click="createProject">+ 新建项目</button>
+            <button class="btn btn-primary" @click="create_">+ 新建项目</button>
         </div>
         <div class="card">
             <table>
-                <thead><tr><th>ID</th><th>标题</th><th>状态</th><th>资源数</th><th>质量</th><th>操作</th></tr></thead>
+                <thead><tr><th>ID</th><th>标题</th><th>状态</th><th>资源</th><th>质量</th><th>操作</th></tr></thead>
                 <tbody>
                     <tr v-for="p in projects" :key="p.id">
-                        <td style="color:#888">{{ p.id.slice(0,8) }}</td>
-                        <td><router-link :to="'/projects/' + p.id">{{ p.title }}</router-link></td>
-                        <td><badge :text="p.status" :variant="statusVariant(p.status)" /></td>
+                        <td style="color:var(--text-muted)">{{ p.id.slice(0,8) }}</td>
+                        <td><router-link :to="'/projects/'+p.id">{{ p.title }}</router-link></td>
+                        <td><badge :text="p.status" :variant="sv(p.status)" /></td>
                         <td>{{ p.resource_count || 0 }}</td>
                         <td>{{ p.avg_score ? p.avg_score.toFixed(1) : '-' }}</td>
                         <td>
-                            <router-link :to="'/projects/' + p.id" class="btn btn-primary btn-sm">查看</router-link>
-                            <button class="btn btn-danger btn-sm" @click="deleteProject(p)">删除</button>
+                            <router-link :to="'/projects/'+p.id" class="btn btn-primary btn-sm">查看</router-link>
+                            <button class="btn btn-danger btn-sm" style="margin-left:6px" @click="del(p)">删除</button>
                         </td>
                     </tr>
                     <tr v-if="!projects.length"><td colspan="6" class="empty-state">暂无项目</td></tr>
@@ -191,52 +198,57 @@ const ProjectsPage = {
     </div>
     `,
     setup() {
-        const router = useRouter()
-        const statusVariant = (s) => ({ active: 'green', archived: 'gray', paused: 'yellow' }[s] || 'gray')
-        async function createProject() {
+        const sv = s => ({ active: 'green', archived: 'gray', paused: 'yellow' })[s] || 'gray'
+        async function create_() {
             const title = prompt('请输入学习主题:')
             if (!title) return
             await api.post('/projects', { title })
             await loadProjects()
         }
-        async function deleteProject(p) {
-            if (!confirm(`确认删除项目 "${p.title}"？`)) return
+        async function del(p) {
+            if (!confirm('确认删除 "' + p.title + '"？')) return
             await api.del('/projects/' + p.id)
             await loadProjects()
         }
         onMounted(loadProjects)
-        return { projects, statusVariant, createProject, deleteProject }
+        return { projects, sv, create_, del }
     },
 }
+
+// ── Project Detail Page ──────────────────────────────────────
 
 const ProjectDetailPage = {
     template: `
     <div v-if="project">
         <h1 class="page-title">{{ project.title }}</h1>
-        <p style="color:var(--text-light);margin-bottom:20px;">{{ project.description || '' }}</p>
+        <p v-if="project.description" style="color:var(--text-light);margin:-16px 0 24px">{{ project.description }}</p>
         <div class="stats-grid">
             <stat-card :value="project.resource_count" label="资源数" />
             <stat-card :value="project.avg_score" label="平均质量" />
-            <stat-card :value="sourceCount" label="数据源" />
+            <stat-card :value="srcCount" label="数据源" />
         </div>
         <div class="grid-3">
-            <div class="card node-card" @click="goTo('graph')">
-                <h2>知识图谱</h2>
-                <p style="color:var(--text-light)">交互式知识图谱</p>
+            <div class="card nav-card" @click="go('graph')">
+                <div class="nav-card-icon">🗺️</div>
+                <div class="nav-card-title">知识图谱</div>
+                <div class="nav-card-desc">交互式知识结构</div>
             </div>
-            <div class="card node-card" @click="goTo('learning-path')">
-                <h2>学习路径</h2>
-                <p style="color:var(--text-light)">个性化学习路径</p>
+            <div class="card nav-card" @click="go('learning-path')">
+                <div class="nav-card-icon">📚</div>
+                <div class="nav-card-title">学习路径</div>
+                <div class="nav-card-desc">个性化学习计划</div>
             </div>
-            <div class="card node-card" @click="goTo('concepts')">
-                <h2>知识列表</h2>
-                <p style="color:var(--text-light)">所有知识点</p>
+            <div class="card nav-card" @click="go('concepts')">
+                <div class="nav-card-icon">📖</div>
+                <div class="nav-card-title">知识列表</div>
+                <div class="nav-card-desc">全部知识点</div>
             </div>
         </div>
-        <div class="card" style="margin-top:16px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-                <h2 style="margin:0;">资源列表</h2>
-                <div>
+        <div class="card" style="margin-top:16px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                <h2 style="margin:0">资源列表</h2>
+                <div style="display:flex;gap:8px">
+                    <button class="btn btn-outline btn-sm" @click="exportMd">导出 MD</button>
                     <button class="btn btn-primary btn-sm" @click="collect" :disabled="collecting">
                         {{ collecting ? '采集中...' : '采集新资源' }}
                     </button>
@@ -245,10 +257,10 @@ const ProjectDetailPage = {
             <table>
                 <thead><tr><th>标题</th><th>来源</th><th>质量</th><th>难度</th></tr></thead>
                 <tbody>
-                    <tr v-for="r in resources.slice(0, 30)" :key="r.id">
+                    <tr v-for="r in resources.slice(0,30)" :key="r.id">
                         <td><a :href="r.url" target="_blank">{{ r.title }}</a></td>
-                        <td>{{ r.source }}</td>
-                        <td :style="{ color: scoreColor(r.quality_score) }">{{ r.quality_score ? r.quality_score.toFixed(1) : '-' }}</td>
+                        <td><badge :text="r.source" variant="gray" /></td>
+                        <td :style="{ color: sc(r.quality_score) }">{{ r.quality_score ? r.quality_score.toFixed(1) : '-' }}</td>
                         <td>{{ r.difficulty || '-' }}</td>
                     </tr>
                     <tr v-if="!resources.length"><td colspan="4" class="empty-state">暂无资源</td></tr>
@@ -256,7 +268,7 @@ const ProjectDetailPage = {
             </table>
         </div>
     </div>
-    <div v-else class="loading">加载中...</div>
+    <div v-else class="loading"><div class="spinner"></div><p>加载中...</p></div>
     `,
     setup() {
         const route = useRoute()
@@ -264,10 +276,7 @@ const ProjectDetailPage = {
         const project = ref(null)
         const resources = ref([])
         const collecting = ref(false)
-        const sourceCount = computed(() => {
-            const sources = project.value?.sources || {}
-            return Object.keys(sources).length
-        })
+        const srcCount = computed(() => Object.keys(project.value?.sources || {}).length)
 
         async function load() {
             const pid = route.params.projectId
@@ -275,263 +284,237 @@ const ProjectDetailPage = {
                 project.value = await api.get('/projects/' + pid)
                 currentProject.value = project.value
                 resources.value = await api.get('/projects/' + pid + '/resources')
-            } catch (e) {
-                console.error(e)
-            }
+            } catch (e) { console.error(e) }
         }
 
-        function goTo(page) {
-            router.push('/projects/' + route.params.projectId + '/' + page)
-        }
+        function go(page) { router.push('/projects/' + route.params.projectId + '/' + page) }
 
         async function collect() {
             collecting.value = true
-            try {
-                await api.post('/projects/' + route.params.projectId + '/collect', {})
-                await load()
-            } finally {
-                collecting.value = false
-            }
+            try { await api.post('/projects/' + route.params.projectId + '/collect', {}); await load() }
+            finally { collecting.value = false }
         }
 
-        function scoreColor(s) {
-            if (!s) return '#888'
-            if (s >= 7) return '#2e7d32'
-            if (s >= 5) return '#e65100'
-            return '#c62828'
-        }
+        function exportMd() { window.open('/api/projects/' + route.params.projectId + '/export?format=markdown') }
+
+        function sc(s) { return s >= 7 ? 'var(--success)' : s >= 5 ? 'var(--warning)' : 'var(--danger)' }
 
         onMounted(load)
-        return { project, resources, collecting, sourceCount, goTo, collect, scoreColor }
+        return { project, resources, collecting, srcCount, go, collect, exportMd, sc }
     },
 }
+
+// ── Graph Page ───────────────────────────────────────────────
 
 const GraphPage = {
     template: `
     <div>
         <div class="graph-toolbar">
-            <input v-model="searchQuery" placeholder="搜索节点..." class="search-input" />
-            <select v-model="layoutName" class="layout-select">
+            <input v-model="q" placeholder="搜索节点..." class="search-input" />
+            <select v-model="layout" class="layout-select">
                 <option value="breadthfirst">层次布局</option>
                 <option value="cose">力导向</option>
                 <option value="circle">环形</option>
                 <option value="grid">网格</option>
             </select>
+            <button class="btn btn-outline btn-sm" @click="fit">适应画布</button>
         </div>
-        <div ref="cyContainer" class="graph-container"></div>
-        <div id="tooltip" v-show="tooltip.visible"
-             :style="{ left: tooltip.x + 'px', top: tooltip.y + 'px' }"
-             class="graph-tooltip">
-            <div class="tooltip-title">{{ tooltip.title }}</div>
-            <div class="tooltip-meta">{{ tooltip.meta }}</div>
-            <div class="tooltip-def">{{ tooltip.def }}</div>
+        <div ref="cyEl" class="graph-container"></div>
+        <div v-show="tip.show" class="graph-tooltip" :style="{ left: tip.x+'px', top: tip.y+'px' }">
+            <div class="tooltip-title">{{ tip.title }}</div>
+            <div class="tooltip-meta">{{ tip.meta }}</div>
+            <div class="tooltip-def" v-if="tip.def">{{ tip.def }}</div>
+        </div>
+        <div class="graph-legend">
+            <h4>图例</h4>
+            <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#3B82F6"></span>概念</div>
+            <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#F59E0B"></span>技术</div>
+            <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#10B981"></span>原理</div>
+            <div class="graph-legend-item"><span class="graph-legend-dot" style="background:#8B5CF6"></span>实践</div>
+            <div style="border-top:1px solid var(--border);margin:8px 0"></div>
+            <div class="graph-legend-item"><span class="graph-legend-line" style="background:#94A3B8"></span>相关</div>
+            <div class="graph-legend-item"><span class="graph-legend-line" style="background:#EF4444;border-top:2px dashed #EF4444;height:0"></span>前置</div>
         </div>
     </div>
     `,
     setup() {
         const route = useRoute()
         const router = useRouter()
-        const cyContainer = ref(null)
-        const searchQuery = ref('')
-        const layoutName = ref('breadthfirst')
-        const tooltip = ref({ visible: false, x: 0, y: 0, title: '', meta: '', def: '' })
+        const cyEl = ref(null)
+        const q = ref('')
+        const layout = ref('breadthfirst')
+        const tip = ref({ show: false, x: 0, y: 0, title: '', meta: '', def: '' })
         let cy = null
+        const TC = { concept: '#3B82F6', technology: '#F59E0B', principle: '#10B981', practice: '#8B5CF6', project: '#EC4899', application: '#06B6D4' }
 
-        const typeColors = {
-            concept: '#3B82F6', technology: '#F59E0B', principle: '#10B981',
-            practice: '#8B5CF6', project: '#EC4899', application: '#06B6D4',
-        }
-
-        async function loadGraph() {
+        async function load() {
             const pid = route.params.projectId
             try {
                 const data = await api.get('/projects/' + pid + '/graph')
                 currentProject.value = { id: pid, title: data.topic || '知识图谱' }
-                initCytoscape(data.nodes, data.edges)
-            } catch (e) {
-                console.error('Failed to load graph:', e)
-            }
+                await nextTick()
+                init(data.nodes, data.edges)
+            } catch (e) { console.error(e) }
         }
 
-        function initCytoscape(nodes, edges) {
-            // Dynamic import cytoscape
-            const script = document.createElement('script')
-            script.src = 'https://unpkg.com/cytoscape@3.28.0/dist/cytoscape.min.js'
-            script.onload = () => {
-                cy = cytoscape({
-                    container: cyContainer.value,
-                    elements: [
-                        ...nodes.map(n => ({ data: { id: n.id, label: n.name, type: n.type, difficulty: n.difficulty, definition: (n.definition || '').substring(0, 80) } })),
-                        ...edges.map(e => ({ data: { source: e.from, target: e.to, type: e.type, weight: e.weight, reason: e.reason || '' } })),
-                    ],
-                    style: [
-                        { selector: 'node', style: { label: 'data(label)', 'background-color': el => typeColors[el.data('type')] || '#3B82F6', color: '#fff', 'text-valign': 'center', 'font-size': '11px', width: 36, height: 36, 'text-wrap': 'ellipsis', 'text-max-width': '80px' } },
-                        { selector: 'node.highlighted', style: { 'border-width': 3, 'border-color': '#EF4444', width: 48, height: 48 } },
-                        { selector: 'node.dimmed', style: { opacity: 0.2 } },
-                        { selector: 'edge', style: { width: 1.5, 'line-color': '#94A3B8', 'target-arrow-color': '#94A3B8', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier' } },
-                        { selector: 'edge[type="prerequisite"]', style: { 'line-color': '#EF4444', 'target-arrow-color': '#EF4444', 'line-style': 'dashed', width: 2 } },
-                        { selector: 'edge.dimmed', style: { opacity: 0.1 } },
-                    ],
-                    layout: { name: 'breadthfirst', directed: true, spacingFactor: 1.5 },
-                })
-
-                cy.on('tap', 'node', evt => {
-                    router.push('/projects/' + route.params.projectId + '/concepts/' + evt.target.id())
-                })
-
-                cy.on('mouseover', 'node', evt => {
-                    const d = evt.target.data()
-                    tooltip.value = { visible: true, x: 0, y: 0, title: d.label, meta: d.type + ' · ' + d.difficulty, def: d.definition || '' }
-                })
-                cy.on('mousemove', evt => {
-                    tooltip.value.x = evt.originalEvent.clientX + 15
-                    tooltip.value.y = evt.originalEvent.clientY + 15
-                })
-                cy.on('mouseout', 'node', () => { tooltip.value.visible = false })
-            }
-            document.head.appendChild(script)
+        function init(nodes, edges) {
+            if (typeof cytoscape === 'undefined') {
+                const s = document.createElement('script')
+                s.src = 'https://unpkg.com/cytoscape@3.28.0/dist/cytoscape.min.js'
+                s.onload = () => build(nodes, edges)
+                document.head.appendChild(s)
+            } else build(nodes, edges)
         }
 
-        watch(searchQuery, q => {
+        function build(nodes, edges) {
+            cy = cytoscape({
+                container: cyEl.value,
+                elements: [
+                    ...nodes.map(n => ({ data: { id: n.id, label: n.name, type: n.type, difficulty: n.difficulty, def: (n.definition || '').substring(0, 100) } })),
+                    ...edges.map(e => ({ data: { source: e.from, target: e.to, type: e.type, weight: e.weight, reason: e.reason || '' } })),
+                ],
+                style: [
+                    { selector: 'node', style: { label: 'data(label)', 'background-color': el => TC[el.data('type')] || '#3B82F6', color: '#fff', 'text-valign': 'center', 'font-size': '11px', width: 40, height: 40, 'text-wrap': 'ellipsis', 'text-max-width': '80px', 'border-width': 2, 'border-color': 'rgba(255,255,255,0.3)' } },
+                    { selector: 'node.highlighted', style: { 'border-width': 3, 'border-color': '#EF4444', width: 52, height: 52, 'font-size': '13px' } },
+                    { selector: 'node.dimmed', style: { opacity: 0.15 } },
+                    { selector: 'edge', style: { width: 1.5, 'line-color': '#94A3B8', 'target-arrow-color': '#94A3B8', 'target-arrow-shape': 'triangle', 'curve-style': 'bezier' } },
+                    { selector: 'edge[type="prerequisite"]', style: { 'line-color': '#EF4444', 'target-arrow-color': '#EF4444', 'line-style': 'dashed', width: 2 } },
+                    { selector: 'edge.dimmed', style: { opacity: 0.08 } },
+                ],
+                layout: { name: 'breadthfirst', directed: true, spacingFactor: 1.5 },
+                minZoom: 0.3, maxZoom: 3,
+            })
+            cy.on('tap', 'node', e => router.push('/projects/' + route.params.projectId + '/concepts/' + e.target.id()))
+            cy.on('mouseover', 'node', e => {
+                const d = e.target.data()
+                tip.value = { show: true, x: 0, y: 0, title: d.label, meta: d.type + ' · ' + d.difficulty, def: d.def || '' }
+            })
+            cy.on('mousemove', e => { tip.value.x = e.originalEvent.clientX + 15; tip.value.y = e.originalEvent.clientY + 15 })
+            cy.on('mouseout', 'node', () => { tip.value.show = false })
+        }
+
+        function fit() { if (cy) cy.fit(undefined, 30) }
+
+        watch(q, v => {
             if (!cy) return
-            if (!q) { cy.elements().removeClass('highlighted dimmed'); return }
+            if (!v) { cy.elements().removeClass('highlighted dimmed'); return }
             cy.nodes().forEach(n => {
-                const match = n.data('label').toLowerCase().includes(q.toLowerCase())
-                n.toggleClass('highlighted', match)
-                n.toggleClass('dimmed', !match)
+                const m = n.data('label').toLowerCase().includes(v.toLowerCase())
+                n.toggleClass('highlighted', m).toggleClass('dimmed', !m)
             })
             cy.edges().addClass('dimmed')
-            cy.edges().forEach(e => {
-                if (e.source().hasClass('highlighted') || e.target().hasClass('highlighted')) e.removeClass('dimmed')
-            })
+            cy.edges().forEach(e => { if (e.source().hasClass('highlighted') || e.target().hasClass('highlighted')) e.removeClass('dimmed') })
         })
 
-        watch(layoutName, name => {
-            if (!cy) return
-            cy.layout({ name, directed: name === 'breadthfirst', spacingFactor: 1.5, animate: true }).run()
-        })
+        watch(layout, v => { if (cy) cy.layout({ name: v, directed: v === 'breadthfirst', spacingFactor: 1.5, animate: true }).run() })
 
-        onMounted(loadGraph)
-        return { cyContainer, searchQuery, layoutName, tooltip }
+        onMounted(load)
+        return { cyEl, q, layout, tip, fit }
     },
 }
 
+// ── Learning Path Page ───────────────────────────────────────
+
 const LearningPathPage = {
     template: `
-    <div v-if="pathData">
+    <div v-if="pd">
         <h1 class="page-title">学习路径</h1>
         <div class="card">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <span class="text-sm">学习进度</span>
-                <span class="text-sm" style="color:var(--text-light)">{{ doneCount }}/{{ pathData.total_steps }}</span>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <span style="font-weight:500">学习进度</span>
+                <span style="color:var(--text-light)">{{ done }}/{{ pd.total_steps }}</span>
             </div>
-            <div class="progress-bar"><div class="fill" :style="{ width: progressPct + '%' }"></div></div>
+            <div class="progress-bar"><div class="fill" :style="{ width: pct + '%' }"></div></div>
         </div>
-
-        <div v-for="(group, gName) in groupedSteps" :key="gName" class="phase-group">
-            <div class="phase-header" @click="toggleGroup(gName)">
-                <span><span class="dot" :class="'dot-' + group.color"></span> {{ gName }} ({{ group.steps.length }} 个)</span>
-                <span>{{ expandedGroups[gName] ? '▼' : '▶' }}</span>
+        <div v-for="(g, name) in groups" :key="name" class="phase-group">
+            <div class="phase-header" @click="toggle(name)">
+                <span><span class="dot" :class="'dot-'+g.color"></span>{{ name }} ({{ g.steps.length }})</span>
+                <span style="color:var(--text-muted)">{{ exp[name] ? '▼' : '▶' }}</span>
             </div>
-            <div class="phase-steps" v-show="expandedGroups[gName]">
-                <div v-for="step in group.steps" :key="step.concept" class="step-item">
-                    <input type="checkbox" :checked="progress[step.concept]" @change="toggleStep(step.concept)" />
-                    <div style="flex:1">
-                        <router-link :to="'/projects/' + projectId + '/concepts/' + step.concept" class="step-link">
-                            {{ step.name || step.concept }}
+            <div class="phase-steps" v-show="exp[name]">
+                <div v-for="s in g.steps" :key="s.concept" class="step-item">
+                    <input type="checkbox" :checked="!!prog[s.concept]" @change="toggleStep(s.concept)" />
+                    <div style="flex:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                        <router-link :to="'/projects/'+pid+'/concepts/'+s.concept" class="step-link">
+                            {{ s.name || s.concept }}
                         </router-link>
-                        <badge v-if="step.priority === 'high'" text="优先" variant="red" style="margin-left:8px" />
-                        <badge :text="step.difficulty" :variant="diffVariant(step.difficulty)" style="margin-left:4px" />
+                        <badge v-if="s.priority==='high'" text="优先" variant="red" />
+                        <badge :text="s.difficulty" :variant="dv(s.difficulty)" />
                     </div>
                 </div>
             </div>
         </div>
     </div>
-    <div v-else class="loading">加载中...</div>
+    <div v-else class="loading"><div class="spinner"></div><p>加载中...</p></div>
     `,
     setup() {
         const route = useRoute()
-        const pathData = ref(null)
-        const progress = ref({})
-        const expandedGroups = ref({})
+        const pd = ref(null)
+        const prog = ref({})
+        const exp = ref({})
+        const pid = computed(() => route.params.projectId)
+        const done = computed(() => Object.keys(prog.value).length)
+        const pct = computed(() => Math.round(done.value / (pd.value?.total_steps || 1) * 100))
 
-        const projectId = computed(() => route.params.projectId)
-
-        const doneCount = computed(() => Object.keys(progress.value).length)
-        const progressPct = computed(() => {
-            const total = pathData.value?.total_steps || 1
-            return Math.round(doneCount.value / total * 100)
+        const groups = computed(() => {
+            const steps = pd.value?.steps || []
+            const g = { '入门': [], '基础': [], '进阶': [], '高级': [] }
+            for (const s of steps) {
+                const d = s.difficulty || 'intermediate'
+                if (d === 'beginner') g['入门'].push(s)
+                else if (d === 'advanced') g['高级'].push(s)
+                else if ((s.importance || 0.5) >= 0.5) g['进阶'].push(s)
+                else g['基础'].push(s)
+            }
+            const r = {}
+            const c = { '入门': 'green', '基础': 'blue', '进阶': 'amber', '高级': 'red' }
+            for (const [n, s] of Object.entries(g)) {
+                if (s.length) { r[n] = { steps: s, color: c[n] }; if (exp.value[n] === undefined) exp.value[n] = true }
+            }
+            return r
         })
 
-        const groupedSteps = computed(() => {
-            const steps = pathData.value?.steps || []
-            const groups = { '入门': [], '基础': [], '进阶': [], '高级': [] }
-            for (const step of steps) {
-                const diff = step.difficulty || 'intermediate'
-                if (diff === 'beginner') groups['入门'].push(step)
-                else if (diff === 'advanced') groups['高级'].push(step)
-                else if ((step.importance || 0.5) >= 0.5) groups['进阶'].push(step)
-                else groups['基础'].push(step)
-            }
-            const result = {}
-            const colors = { '入门': 'green', '基础': 'blue', '进阶': 'amber', '高级': 'red' }
-            for (const [name, steps] of Object.entries(groups)) {
-                if (steps.length) {
-                    result[name] = { steps, color: colors[name] }
-                    if (expandedGroups.value[name] === undefined) expandedGroups.value[name] = true
-                }
-            }
-            return result
-        })
-
-        function diffVariant(d) {
-            return { beginner: 'green', intermediate: 'yellow', advanced: 'red' }[d] || 'gray'
-        }
-
-        function toggleGroup(name) {
-            expandedGroups.value[name] = !expandedGroups.value[name]
-        }
-
+        const dv = d => ({ beginner: 'green', intermediate: 'yellow', advanced: 'red' })[d] || 'gray'
+        function toggle(n) { exp.value[n] = !exp.value[n] }
         function toggleStep(cid) {
-            if (progress.value[cid]) delete progress.value[cid]
-            else progress.value[cid] = Date.now()
-            localStorage.setItem('openlearning_progress', JSON.stringify(progress.value))
+            if (prog.value[cid]) delete prog.value[cid]
+            else prog.value[cid] = Date.now()
+            localStorage.setItem('ol_progress', JSON.stringify(prog.value))
         }
 
         async function load() {
-            const pid = route.params.projectId
             try {
-                pathData.value = await api.get('/projects/' + pid + '/learning-path')
-                currentProject.value = { id: pid, title: '学习路径' }
-                progress.value = JSON.parse(localStorage.getItem('openlearning_progress') || '{}')
-            } catch (e) {
-                console.error(e)
-            }
+                pd.value = await api.get('/projects/' + route.params.projectId + '/learning-path')
+                currentProject.value = { id: route.params.projectId, title: '学习路径' }
+                prog.value = JSON.parse(localStorage.getItem('ol_progress') || '{}')
+            } catch (e) { console.error(e) }
         }
 
         onMounted(load)
-        return { pathData, progress, expandedGroups, projectId, doneCount, progressPct, groupedSteps, diffVariant, toggleGroup, toggleStep }
+        return { pd, prog, exp, pid, done, pct, groups, dv, toggle, toggleStep }
     },
 }
+
+// ── Concepts List Page ───────────────────────────────────────
 
 const ConceptsPage = {
     template: `
     <div>
         <h1 class="page-title">知识列表</h1>
         <div class="search-bar">
-            <input v-model="searchQuery" placeholder="搜索知识点..." />
+            <input v-model="sq" placeholder="搜索知识点..." />
         </div>
-        <div class="filter-pills">
-            <button class="filter-pill" :class="{ active: typeFilter === 'all' }" @click="typeFilter = 'all'">全部类型</button>
-            <button v-for="t in types" :key="t" class="filter-pill" :class="{ active: typeFilter === t }" @click="typeFilter = t">{{ t }}</button>
+        <div class="filter-pills" style="margin-bottom:8px">
+            <button class="filter-pill" :class="{active:tf==='all'}" @click="tf='all'">全部类型</button>
+            <button v-for="t in types" :key="t" class="filter-pill" :class="{active:tf===t}" @click="tf=t">{{ t }}</button>
         </div>
-        <div class="filter-pills" style="margin-top:8px;">
-            <button class="filter-pill" :class="{ active: diffFilter === 'all' }" @click="diffFilter = 'all'">全部难度</button>
-            <button v-for="d in diffs" :key="d" class="filter-pill" :class="{ active: diffFilter === d }" @click="diffFilter = d">{{ d }}</button>
+        <div class="filter-pills" style="margin-bottom:16px">
+            <button class="filter-pill" :class="{active:df==='all'}" @click="df='all'">全部难度</button>
+            <button v-for="d in diffs" :key="d" class="filter-pill" :class="{active:df===d}" @click="df=d">{{ d }}</button>
         </div>
-        <p style="color:var(--text-light);margin:12px 0;">{{ filtered.length }} 个知识点</p>
+        <p style="color:var(--text-light);margin-bottom:16px">{{ filtered.length }} 个知识点</p>
         <div class="node-grid">
-            <node-card v-for="node in filtered" :key="node.id" :node="node" />
+            <node-card v-for="n in filtered" :key="n.id" :node="n" />
         </div>
         <div v-if="!filtered.length" class="empty-state">
             <div class="icon">📚</div>
@@ -542,49 +525,42 @@ const ConceptsPage = {
     setup() {
         const route = useRoute()
         const concepts = ref([])
-        const searchQuery = ref('')
-        const typeFilter = ref('all')
-        const diffFilter = ref('all')
-
+        const sq = ref('')
+        const tf = ref('all')
+        const df = ref('all')
         const types = computed(() => [...new Set(concepts.value.map(c => c.type))].sort())
         const diffs = computed(() => [...new Set(concepts.value.map(c => c.difficulty))].sort())
-
         const filtered = computed(() => {
-            let list = concepts.value
-            if (typeFilter.value !== 'all') list = list.filter(c => c.type === typeFilter.value)
-            if (diffFilter.value !== 'all') list = list.filter(c => c.difficulty === diffFilter.value)
-            if (searchQuery.value) {
-                const q = searchQuery.value.toLowerCase()
-                list = list.filter(c => c.name.toLowerCase().includes(q) || (c.definition || '').toLowerCase().includes(q))
-            }
-            return list.sort((a, b) => (b.importance || 0.5) - (a.importance || 0.5))
+            let l = concepts.value
+            if (tf.value !== 'all') l = l.filter(c => c.type === tf.value)
+            if (df.value !== 'all') l = l.filter(c => c.difficulty === df.value)
+            if (sq.value) { const q = sq.value.toLowerCase(); l = l.filter(c => c.name.toLowerCase().includes(q) || (c.definition || '').toLowerCase().includes(q)) }
+            return l.sort((a, b) => (b.importance || 0.5) - (a.importance || 0.5))
         })
 
         async function load() {
             const pid = route.params.projectId
             try {
                 concepts.value = await api.get('/projects/' + pid + '/concepts')
-                // Load project info
-                const p = await api.get('/projects/' + pid)
-                currentProject.value = p
-            } catch (e) {
-                console.error(e)
-            }
+                currentProject.value = await api.get('/projects/' + pid)
+            } catch (e) { console.error(e) }
         }
-
         onMounted(load)
-        return { concepts, searchQuery, typeFilter, diffFilter, types, diffs, filtered }
+        return { concepts, sq, tf, df, types, diffs, filtered }
     },
 }
+
+// ── Concept Detail Page ──────────────────────────────────────
 
 const ConceptDetailPage = {
     template: `
     <div v-if="node">
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;">
+        <div class="concept-header">
             <h1 class="page-title" style="margin:0">{{ node.name }}</h1>
             <badge :text="node.type" variant="blue" />
-            <badge :text="node.difficulty" :variant="diffVariant" />
+            <badge :text="node.difficulty" :variant="dv" />
             <span class="stars">{{ stars }}</span>
+            <button class="btn btn-ghost" @click="toggleBookmark" style="margin-left:auto">{{ bookmarked ? '★ 已收藏' : '☆ 收藏' }}</button>
         </div>
 
         <div class="card" v-if="node.definition">
@@ -594,118 +570,163 @@ const ConceptDetailPage = {
 
         <div class="card" v-if="node.explanation">
             <h2>💡 详解</h2>
-            <p v-for="(p, i) in explanationParagraphs" :key="i" style="margin-bottom:12px;">{{ p }}</p>
+            <p v-for="(p,i) in expl" :key="i" style="margin-bottom:12px">{{ p }}</p>
         </div>
 
-        <div class="card" v-if="node.key_points && node.key_points.length">
+        <div class="card" v-if="fl(node.key_points).length">
             <h2>🎯 关键要点</h2>
-            <ul>
-                <li v-for="(p, i) in flatList(node.key_points)" :key="i">{{ p }}</li>
-            </ul>
+            <ul style="padding-left:20px"><li v-for="(p,i) in fl(node.key_points)" :key="i" style="margin-bottom:6px">{{ p }}</li></ul>
         </div>
 
-        <div class="card" v-if="node.examples && node.examples.length">
+        <div class="card" v-if="fl(node.examples).length">
             <h2>🔧 实例</h2>
-            <div v-for="(e, i) in flatList(node.examples)" :key="i" style="margin-bottom:8px;">▸ {{ e }}</div>
+            <div v-for="(e,i) in fl(node.examples)" :key="i" style="margin-bottom:8px">▸ {{ e }}</div>
         </div>
 
-        <div class="card" v-if="node.common_mistakes && node.common_mistakes.length">
+        <div class="card concept-card warning" v-if="fl(node.common_mistakes).length">
             <h2>⚠️ 常见误区</h2>
-            <ul>
-                <li v-for="(m, i) in flatList(node.common_mistakes)" :key="i">⚠ {{ m }}</li>
-            </ul>
+            <ul style="padding-left:20px"><li v-for="(m,i) in fl(node.common_mistakes)" :key="i" style="margin-bottom:6px">{{ m }}</li></ul>
         </div>
 
-        <div class="card" v-if="node.learning_tips" style="border-left:4px solid var(--primary);">
+        <div class="card concept-card tip" v-if="node.learning_tips">
             <h2>💡 学习建议</h2>
-            <p style="font-style:italic;">{{ node.learning_tips }}</p>
+            <p style="font-style:italic">{{ node.learning_tips }}</p>
         </div>
 
-        <div class="card" v-if="detail.prerequisites && detail.prerequisites.length">
+        <div class="card" v-if="dt.prerequisites && dt.prerequisites.length">
             <h2>📋 前置知识</h2>
             <div class="link-group">
-                <router-link v-for="p in detail.prerequisites" :key="p.id"
-                    :to="'/projects/' + projectId + '/concepts/' + p.id"
-                    class="link-tag link-red">
-                    {{ p.name }} <span v-if="p.reason" class="link-reason">({{ p.reason }})</span>
+                <router-link v-for="p in dt.prerequisites" :key="p.id" :to="'/projects/'+pid+'/concepts/'+p.id" class="link-tag link-red">
+                    {{ p.name }}<span v-if="p.reason" class="link-reason">({{ p.reason }})</span>
                 </router-link>
             </div>
         </div>
 
-        <div class="card" v-if="detail.extends && detail.extends.length">
+        <div class="card" v-if="dt.extends && dt.extends.length">
             <h2>🚀 进阶方向</h2>
             <div class="link-group">
-                <router-link v-for="e in detail.extends" :key="e.id"
-                    :to="'/projects/' + projectId + '/concepts/' + e.id"
-                    class="link-tag link-green">
-                    {{ e.name }}
-                </router-link>
+                <router-link v-for="e in dt.extends" :key="e.id" :to="'/projects/'+pid+'/concepts/'+e.id" class="link-tag link-green">{{ e.name }}</router-link>
             </div>
         </div>
 
-        <div class="card" v-if="detail.related && detail.related.length">
+        <div class="card" v-if="dt.related && dt.related.length">
             <h2>🔗 相关概念</h2>
             <div class="link-group">
-                <router-link v-for="r in detail.related" :key="r.id"
-                    :to="'/projects/' + projectId + '/concepts/' + r.id"
-                    class="link-tag link-blue">
-                    {{ r.name }}
-                </router-link>
+                <router-link v-for="r in dt.related" :key="r.id" :to="'/projects/'+pid+'/concepts/'+r.id" class="link-tag link-blue">{{ r.name }}</router-link>
             </div>
         </div>
 
-        <div class="card" v-if="detail.resources && detail.resources.length">
+        <div class="card" v-if="dt.resources && dt.resources.length">
             <h2>📚 推荐资源</h2>
-            <div v-for="r in detail.resources" :key="r.url" class="resource-item">
+            <div v-for="r in dt.resources" :key="r.url" class="resource-item">
                 <a :href="r.url" target="_blank">{{ r.title || r.url }}</a>
-                <span v-if="r.source" class="badge badge-gray" style="margin-left:8px;">{{ r.source }}</span>
+                <badge v-if="r.source" :text="r.source" variant="gray" />
+                <span v-if="r.quality_score" class="stars" style="font-size:12px">{{ '★'.repeat(Math.round(r.quality_score/2)) }}</span>
             </div>
         </div>
+
+        <div style="display:flex;justify-content:space-between;margin-top:24px;gap:16px">
+            <router-link v-if="prev" :to="'/projects/'+pid+'/concepts/'+prev.id" class="card nav-card" style="flex:1;text-align:left">
+                <div style="font-size:12px;color:var(--text-muted)">← 上一个</div>
+                <div style="font-weight:600">{{ prev.name }}</div>
+            </router-link>
+            <div v-else style="flex:1"></div>
+            <router-link v-if="next" :to="'/projects/'+pid+'/concepts/'+next.id" class="card nav-card" style="flex:1;text-align:right">
+                <div style="font-size:12px;color:var(--text-muted)">下一个 →</div>
+                <div style="font-weight:600">{{ next.name }}</div>
+            </router-link>
+            <div v-else style="flex:1"></div>
+        </div>
     </div>
-    <div v-else class="loading">加载中...</div>
+    <div v-else class="loading"><div class="spinner"></div><p>加载中...</p></div>
     `,
     setup() {
         const route = useRoute()
         const node = ref(null)
-        const detail = ref({})
+        const dt = ref({})
+        const allNodes = ref([])
+        const bookmarked = ref(false)
+        const pid = computed(() => route.params.projectId)
+        const dv = computed(() => ({ beginner: 'green', intermediate: 'yellow', advanced: 'red' })[node.value?.difficulty] || 'gray')
+        const stars = computed(() => { const s = Math.round((node.value?.importance || 0.5) * 5); return '★'.repeat(s) + '☆'.repeat(5 - s) })
+        const expl = computed(() => (node.value?.explanation || '').split('\n').filter(p => p.trim()))
+        const idx = computed(() => allNodes.value.findIndex(n => n.id === route.params.conceptId))
+        const prev = computed(() => idx.value > 0 ? allNodes.value[idx.value - 1] : null)
+        const next = computed(() => idx.value >= 0 && idx.value < allNodes.value.length - 1 ? allNodes.value[idx.value + 1] : null)
 
-        const projectId = computed(() => route.params.projectId)
-
-        const diffVariant = computed(() => {
-            const map = { beginner: 'green', intermediate: 'yellow', advanced: 'red' }
-            return map[node.value?.difficulty] || 'gray'
-        })
-
-        const stars = computed(() => {
-            const s = Math.round((node.value?.importance || 0.5) * 5)
-            return '★'.repeat(s) + '☆'.repeat(5 - s)
-        })
-
-        const explanationParagraphs = computed(() => {
-            return (node.value?.explanation || '').split('\n').filter(p => p.trim())
-        })
-
-        function flatList(items) {
+        function fl(items) {
             if (!items) return []
-            return items.flat().filter(Boolean)
+            const r = []
+            for (const i of items) { if (Array.isArray(i)) r.push(...i.filter(Boolean)); else if (i) r.push(i) }
+            return r
+        }
+
+        function checkBookmark() {
+            const bm = JSON.parse(localStorage.getItem('ol_bookmarks') || '[]')
+            bookmarked.value = bm.some(b => b.id === route.params.conceptId)
+        }
+
+        function toggleBookmark() {
+            let bm = JSON.parse(localStorage.getItem('ol_bookmarks') || '[]')
+            const cid = route.params.conceptId
+            if (bm.some(b => b.id === cid)) { bm = bm.filter(b => b.id !== cid); bookmarked.value = false }
+            else { bm.push({ id: cid, name: node.value?.name || cid }); bookmarked.value = true }
+            localStorage.setItem('ol_bookmarks', JSON.stringify(bm))
         }
 
         async function load() {
-            const pid = route.params.projectId
-            const cid = route.params.conceptId
+            const p = route.params.projectId, c = route.params.conceptId
             try {
-                const data = await api.get('/projects/' + pid + '/concepts/' + cid)
-                node.value = data.node
-                detail.value = data
-                currentProject.value = { id: pid, title: data.node?.name || '概念详情' }
-            } catch (e) {
-                console.error(e)
-            }
+                const data = await api.get('/projects/' + p + '/concepts/' + c)
+                node.value = data.node; dt.value = data
+                currentProject.value = { id: p, title: data.node?.name || '概念' }
+                // Load all nodes for prev/next
+                if (!allNodes.value.length) {
+                    const list = await api.get('/projects/' + p + '/concepts')
+                    allNodes.value = list.sort((a, b) => (b.importance || 0.5) - (a.importance || 0.5))
+                }
+                checkBookmark()
+            } catch (e) { console.error(e) }
         }
 
         watch(() => route.params.conceptId, load)
         onMounted(load)
-        return { node, detail, projectId, diffVariant, stars, explanationParagraphs, flatList }
+        return { node, dt, pid, dv, stars, expl, fl, prev, next, bookmarked, toggleBookmark }
+    },
+}
+
+// ── Bookmarks Page ───────────────────────────────────────────
+
+const BookmarksPage = {
+    template: `
+    <div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px">
+            <h1 class="page-title" style="margin:0">⭐ 我的收藏</h1>
+            <button v-if="bm.length" class="btn btn-outline btn-sm" @click="clear">清空全部</button>
+        </div>
+        <div v-if="bm.length">
+            <p style="color:var(--text-light);margin-bottom:16px">{{ bm.length }} 个收藏</p>
+            <div class="node-grid">
+                <div v-for="b in bm" :key="b.id" class="card node-card" style="display:flex;align-items:center;justify-content:space-between">
+                    <router-link :to="'/projects/' + (currentProject?.id || '_') + '/concepts/' + b.id" style="font-weight:500;color:var(--text)">{{ b.name }}</router-link>
+                    <button class="btn btn-ghost btn-sm" @click="remove(b.id)" style="color:var(--danger)">移除</button>
+                </div>
+            </div>
+        </div>
+        <div v-else class="empty-state">
+            <div class="icon">⭐</div>
+            <p>暂无收藏</p>
+            <p style="font-size:13px;margin-top:8px">在知识点详情页点击"收藏"按钮添加</p>
+        </div>
+    </div>
+    `,
+    setup() {
+        const bm = ref([])
+        function load() { bm.value = JSON.parse(localStorage.getItem('ol_bookmarks') || '[]') }
+        function remove(id) { bm.value = bm.value.filter(b => b.id !== id); localStorage.setItem('ol_bookmarks', JSON.stringify(bm.value)) }
+        function clear() { if (confirm('清空所有收藏？')) { bm.value = []; localStorage.removeItem('ol_bookmarks') } }
+        onMounted(load)
+        return { bm, remove, clear }
     },
 }
 
@@ -719,24 +740,24 @@ const routes = [
     { path: '/projects/:projectId/learning-path', component: LearningPathPage },
     { path: '/projects/:projectId/concepts', component: ConceptsPage },
     { path: '/projects/:projectId/concepts/:conceptId', component: ConceptDetailPage },
+    { path: '/bookmarks', component: BookmarksPage },
 ]
 
-const router = createRouter({
-    history: createWebHistory(),
-    routes,
-})
+const router = createRouter({ history: createWebHistory(), routes })
 
-// ── App ──────────────────────────────────────────────────────
+// ── Mount ────────────────────────────────────────────────────
 
 const app = createApp({
     template: `
-    <div class="app-layout">
+    <button class="sidebar-toggle" @click="sidebarOpen = !sidebarOpen">☰</button>
+    <div class="app-layout" @click="sidebarOpen = false">
         <navbar />
         <div class="main-content">
             <router-view />
         </div>
     </div>
     `,
+    setup() { return { sidebarOpen } },
 })
 
 app.component('navbar', Navbar)
