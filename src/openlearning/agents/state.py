@@ -53,3 +53,8 @@ class AgentState(TypedDict, total=False):
     status: str  # running / done / error
     max_iterations: int  # max collection iterations (default 3)
     search_errors: Annotated[list[str], operator.add]  # search error log
+
+    # ── Incremental Update ──────────────────────────────────
+    incremental: bool  # True = skip existing resources
+    since_days: int  # only search content from the last N days
+    update_report: dict  # change detection results (new/updated/removed counts)

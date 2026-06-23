@@ -20,6 +20,8 @@ app = typer.Typer(
     help="OpenLearning — AI 驱动的个人学习信息系统",
     add_completion=False,
 )
+update_app = typer.Typer(help="资源更新: 变更检测 / 增量采集 / 定时更新")
+app.add_typer(update_app, name="update")
 console = Console()
 
 
@@ -464,6 +466,112 @@ def serve(
         server.serve_forever()
     except KeyboardInterrupt:
         console.print("\n[yellow]服务器已停止[/]")
+
+
+# ── Update Commands ──────────────────────────────────────────
+
+@update_app.command("check")
+def update_check(
+    project_id: str = typer.Argument(..., help="项目 ID"),
+    since_days: int = typer.Option(30, "--since-days", "-d", help="检查最近 N 天"),
+):
+    """检查资源变更 (不重建站点)。"""
+    from openlearning.database import init_db, get_project
+
+    init_db()
+    project = get_project(project_id)
+    if not project:
+        console.print(f"[red]未找到项目: {project_id}[/]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]检查项目 '{project.title}' 的资源变更...[/]")
+
+    from openlearning.agents.updater import check_updates
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("检测变更中...", total=None)
+        report = asyncio.run(check_updates(project_id))
+        progress.update(task, description="检测完成!")
+
+    console.print(Panel("[bold]变更检测报告[/]", subtitle=project.title))
+    console.print(f"  新增:     [green]{report.new}[/]")
+    console.print(f"  已更新:   [yellow]{report.updated}[/]")
+    console.print(f"  已失效:   [red]{report.removed}[/]")
+    console.print(f"  无变化:   {report.unchanged}")
+    if report.errors:
+        console.print(f"  错误:     [red]{report.errors}[/]")
+
+    if report.new + report.updated == 0:
+        console.print("\n[dim]无变更，无需更新。[/]")
+    else:
+        console.print(f"\n运行 [bold]openlearning update apply {project_id}[/] 应用变更并重建站点。")
+
+
+@update_app.command("apply")
+def update_apply(
+    project_id: str = typer.Argument(..., help="项目 ID"),
+    since_days: int = typer.Option(7, "--since-days", "-d", help="增量采集最近 N 天"),
+):
+    """应用更新: 增量采集 + 变更检测 + 重建站点。"""
+    from openlearning.database import init_db, get_project
+
+    init_db()
+    project = get_project(project_id)
+    if not project:
+        console.print(f"[red]未找到项目: {project_id}[/]")
+        raise typer.Exit(1)
+
+    console.print(f"[bold]更新项目 '{project.title}'...[/]")
+
+    from openlearning.agents.updater import apply_updates
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("增量更新中...", total=None)
+        result = asyncio.run(apply_updates(project_id, since_days))
+        progress.update(task, description="更新完成!")
+
+    console.print(Panel("[bold green]更新完成[/]", subtitle=project.title))
+    console.print(f"  新增采集: {result.get('new_collected', 0)}")
+    console.print(f"  内容更新: {result.get('updated', 0)}")
+    console.print(f"  已失效:   {result.get('removed', 0)}")
+
+    if result.get("site_path"):
+        console.print(f"\n  [green]站点已重建:[/] {result['site_path']}")
+    elif result.get("new", 0) + result.get("updated", 0) + result.get("new_collected", 0) == 0:
+        console.print("\n[dim]无变更，站点未重建。[/]")
+
+
+@update_app.command("watch")
+def update_watch(
+    project_id: str = typer.Argument(..., help="项目 ID"),
+    interval: str = typer.Option("", "--interval", "-i", help="检查间隔: daily/weekly/monthly"),
+):
+    """启动定时更新任务 (前台运行, Ctrl+C 停止)。"""
+    from openlearning.database import init_db, get_project
+    from openlearning.scheduler import start_scheduler
+
+    init_db()
+    project = get_project(project_id)
+    if not project:
+        console.print(f"[red]未找到项目: {project_id}[/]")
+        raise typer.Exit(1)
+
+    interval_val = interval or None
+    console.print(f"[bold]启动定时更新: '{project.title}'[/]")
+    console.print("按 Ctrl+C 停止\n")
+
+    try:
+        asyncio.run(start_scheduler(project_id, interval=interval_val))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]定时更新已停止[/]")
 
 
 # ── Export ───────────────────────────────────────────────────

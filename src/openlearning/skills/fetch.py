@@ -5,6 +5,7 @@ Tools: fetch_page, extract, parse_pdf
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import httpx
@@ -87,11 +88,15 @@ async def fetch_page(url: str) -> dict[str, Any]:
             title_tag = soup.find("title")
             title = title_tag.get_text(strip=True) if title_tag else ""
 
+        content_text = extracted or ""
+        content_hash = hashlib.sha256(content_text.encode()).hexdigest()
+
         return {
             "url": url,
             "title": title,
-            "content": extracted or "",
+            "content": content_text,
             "metadata": metadata,
+            "content_hash": content_hash,
             "success": True,
         }
 

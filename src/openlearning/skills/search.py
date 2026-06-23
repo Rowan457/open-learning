@@ -6,6 +6,7 @@ Tools: web_search, arxiv_search, youtube_search, github_search
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -20,22 +21,42 @@ from openlearning.config import get_config
 class SearchInput(BaseModel):
     query: str = Field(description="搜索关键词")
     max_results: int = Field(default=20, description="最大结果数")
+    since_days: int | None = Field(default=None, description="只搜索最近 N 天的内容")
 
 
 class ArxivInput(BaseModel):
     query: str = Field(description="搜索关键词")
     max_results: int = Field(default=10, description="最大结果数")
+    since_days: int | None = Field(default=None, description="只搜索最近 N 天的内容")
 
 
 class GitHubInput(BaseModel):
     query: str = Field(description="搜索关键词")
     language: str | None = Field(default=None, description="编程语言过滤")
+    since_days: int | None = Field(default=None, description="只搜索最近 N 天的内容")
+
+
+def _since_date(days: int) -> datetime:
+    """Compute the UTC datetime N days ago."""
+    return datetime.now(timezone.utc) - timedelta(days=days)
+
+
+def _since_iso(days: int) -> str:
+    """ISO date string N days ago (YYYY-MM-DD)."""
+    return _since_date(days).strftime("%Y-%m-%d")
+
+
+def _since_yyyymmdd(days: int) -> str:
+    """Compact date string N days ago (YYYYMMDD) for arXiv."""
+    return _since_date(days).strftime("%Y%m%d")
 
 
 # ── Google Search ────────────────────────────────────────────
 
 @tool("web_search", args_schema=SearchInput)
-async def web_search(query: str, max_results: int = 20) -> list[dict[str, Any]]:
+async def web_search(
+    query: str, max_results: int = 20, since_days: int | None = None
+) -> list[dict[str, Any]]:
     """搜索网页资源。
 
     优先级: SerpAPI → Tavily → DuckDuckGo
@@ -47,29 +68,35 @@ async def web_search(query: str, max_results: int = 20) -> list[dict[str, Any]]:
     # Try SerpAPI first
     if google_cfg := providers.get("google"):
         if google_cfg.api_key:
-            return await _serpapi_search(query, max_results, google_cfg.api_key)
+            return await _serpapi_search(query, max_results, google_cfg.api_key, since_days)
 
     # Try Tavily
     if tavily_cfg := providers.get("tavily"):
         if tavily_cfg.api_key:
-            return await _tavily_search(query, max_results, tavily_cfg.api_key)
+            return await _tavily_search(query, max_results, tavily_cfg.api_key, since_days)
 
     # Fallback to DuckDuckGo (free, no API key needed)
-    return await _duckduckgo_search(query, max_results)
+    return await _duckduckgo_search(query, max_results, since_days)
 
 
-async def _tavily_search(query: str, max_results: int, api_key: str) -> list[dict]:
+async def _tavily_search(
+    query: str, max_results: int, api_key: str, since_days: int | None = None
+) -> list[dict]:
     """Search via Tavily API (AI-optimized search)."""
+    payload = {
+        "query": query,
+        "api_key": api_key,
+        "max_results": min(max_results, 20),
+        "include_answer": False,
+        "include_raw_content": False,
+    }
+    if since_days is not None:
+        payload["days"] = since_days
+
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.post(
             "https://api.tavily.com/search",
-            json={
-                "query": query,
-                "api_key": api_key,
-                "max_results": min(max_results, 20),
-                "include_answer": False,
-                "include_raw_content": False,
-            },
+            json=payload,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -85,17 +112,32 @@ async def _tavily_search(query: str, max_results: int, api_key: str) -> list[dic
     return results
 
 
-async def _serpapi_search(query: str, max_results: int, api_key: str) -> list[dict]:
+async def _serpapi_search(
+    query: str, max_results: int, api_key: str, since_days: int | None = None
+) -> list[dict]:
     """Search via SerpAPI."""
+    params = {
+        "q": query,
+        "num": max_results,
+        "api_key": api_key,
+        "engine": "google",
+    }
+    if since_days is not None:
+        if since_days <= 1:
+            params["tbs"] = "qdr:d"
+        elif since_days <= 7:
+            params["tbs"] = "qdr:w"
+        elif since_days <= 30:
+            params["tbs"] = "qdr:m"
+        elif since_days <= 365:
+            params["tbs"] = "qdr:y"
+        else:
+            params["tbs"] = f"cdr:1,cd_min:{_since_iso(since_days)}"
+
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
             "https://serpapi.com/search",
-            params={
-                "q": query,
-                "num": max_results,
-                "api_key": api_key,
-                "engine": "google",
-            },
+            params=params,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -111,12 +153,25 @@ async def _serpapi_search(query: str, max_results: int, api_key: str) -> list[di
     return results
 
 
-async def _duckduckgo_search(query: str, max_results: int) -> list[dict]:
+async def _duckduckgo_search(
+    query: str, max_results: int, since_days: int | None = None
+) -> list[dict]:
     """Fallback search using DuckDuckGo HTML (no API key)."""
+    params: dict[str, Any] = {"q": query}
+    if since_days is not None:
+        if since_days <= 1:
+            params["df"] = "d"
+        elif since_days <= 7:
+            params["df"] = "w"
+        elif since_days <= 30:
+            params["df"] = "m"
+        else:
+            params["df"] = "y"
+
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
             "https://html.duckduckgo.com/html/",
-            params={"q": query},
+            params=params,
             headers={"User-Agent": "Mozilla/5.0"},
         )
         resp.raise_for_status()
@@ -143,7 +198,9 @@ async def _duckduckgo_search(query: str, max_results: int) -> list[dict]:
 # ── arXiv Search ─────────────────────────────────────────────
 
 @tool("arxiv_search", args_schema=ArxivInput)
-async def arxiv_search(query: str, max_results: int = 10) -> list[dict[str, Any]]:
+async def arxiv_search(
+    query: str, max_results: int = 10, since_days: int | None = None
+) -> list[dict[str, Any]]:
     """搜索 arXiv 学术论文。
 
     使用 arXiv API (免费，无需 API key)。
@@ -151,11 +208,16 @@ async def arxiv_search(query: str, max_results: int = 10) -> list[dict[str, Any]
     """
     import xml.etree.ElementTree as ET
 
+    search_query = f"all:{query}"
+    if since_days is not None:
+        date_str = _since_yyyymmdd(since_days)
+        search_query += f" AND submittedDate:[{date_str} TO 99999999]"
+
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
             "https://export.arxiv.org/api/query",
             params={
-                "search_query": f"all:{query}",
+                "search_query": search_query,
                 "start": 0,
                 "max_results": max_results,
                 "sortBy": "relevance",
@@ -199,7 +261,9 @@ async def arxiv_search(query: str, max_results: int = 10) -> list[dict[str, Any]
 # ── YouTube Search ───────────────────────────────────────────
 
 @tool("youtube_search", args_schema=SearchInput)
-async def youtube_search(query: str, max_results: int = 10) -> list[dict[str, Any]]:
+async def youtube_search(
+    query: str, max_results: int = 10, since_days: int | None = None
+) -> list[dict[str, Any]]:
     """搜索 YouTube 视频教程。
 
     使用 YouTube Data API v3。
@@ -211,19 +275,23 @@ async def youtube_search(query: str, max_results: int = 10) -> list[dict[str, An
 
     if not yt_cfg or not yt_cfg.api_key:
         # Fallback: search via DuckDuckGo with site: filter
-        return await _duckduckgo_search(f"site:youtube.com {query}", max_results)
+        return await _duckduckgo_search(f"site:youtube.com {query}", max_results, since_days)
+
+    params: dict[str, Any] = {
+        "part": "snippet",
+        "q": query,
+        "type": "video",
+        "maxResults": max_results,
+        "key": yt_cfg.api_key,
+        "relevanceLanguage": "zh",
+    }
+    if since_days is not None:
+        params["publishedAfter"] = _since_date(since_days).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
             "https://www.googleapis.com/youtube/v3/search",
-            params={
-                "part": "snippet",
-                "q": query,
-                "type": "video",
-                "maxResults": max_results,
-                "key": yt_cfg.api_key,
-                "relevanceLanguage": "zh",
-            },
+            params=params,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -246,7 +314,9 @@ async def youtube_search(query: str, max_results: int = 10) -> list[dict[str, An
 # ── GitHub Search ────────────────────────────────────────────
 
 @tool("github_search", args_schema=GitHubInput)
-async def github_search(query: str, language: str | None = None) -> list[dict[str, Any]]:
+async def github_search(
+    query: str, language: str | None = None, since_days: int | None = None
+) -> list[dict[str, Any]]:
     """搜索 GitHub 代码仓库。
 
     使用 GitHub REST API (可选 token 提升限额)。
@@ -263,6 +333,8 @@ async def github_search(query: str, language: str | None = None) -> list[dict[st
     q = query
     if language:
         q += f" language:{language}"
+    if since_days is not None:
+        q += f" created:>={_since_iso(since_days)}"
 
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(

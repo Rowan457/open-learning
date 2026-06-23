@@ -20,13 +20,32 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
 
     只负责执行 Planner 生成的 search_queries，不做路由决策。
 
-    Reads: search_queries, avoid_list
+    Reads: search_queries, avoid_list, incremental, since_days
     Writes: raw_resources, collected_count, sources_queried
     """
     queries = state.get("search_queries", [])
-    # 不使用 avoid_list —— Collector 自己做 URL 去重
-    avoid_set: set[str] = set()
     project_id = state.get("learning_plan", {}).get("project_id", "")
+    incremental = state.get("incremental", False)
+    since_days = state.get("since_days")
+
+    # 增量模式: 用已有 URL 做去重, 计算 since_days
+    avoid_set: set[str] = set()
+    if incremental and project_id:
+        from openlearning.database import get_existing_urls, get_last_crawl_date
+        from datetime import datetime, timezone
+
+        avoid_set = get_existing_urls(project_id)
+        logger.info("增量模式: 已有 %s 条资源", len(avoid_set))
+
+        # 自动计算 since_days (若未指定)
+        if since_days is None:
+            last_crawl = get_last_crawl_date(project_id)
+            if last_crawl:
+                delta = datetime.now(timezone.utc) - last_crawl.replace(tzinfo=timezone.utc)
+                since_days = max(1, delta.days)
+                logger.info("上次采集: %s, since_days=%s", last_crawl.date(), since_days)
+            else:
+                since_days = 30  # 首次增量, 默认查最近 30 天
 
     if not queries:
         return {
@@ -37,7 +56,7 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
         }
 
     # 1. Parallel collection from multiple sources
-    all_resources, errors = await _parallel_collect(queries)
+    all_resources, errors = await _parallel_collect(queries, since_days=since_days)
 
     # Debug: log collection stats
     logger.info("查询 %s 个，返回 %s 条资源", len(queries), len(all_resources))
@@ -68,6 +87,15 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
     # 4. Persist to database
     await _persist_resources(deduplicated)
 
+    # 4b. Record crawl tasks for update tracking
+    if project_id and queries:
+        try:
+            from openlearning.database import record_crawl_task
+            for query in queries[:10]:
+                record_crawl_task(project_id, query, "multi", len(deduplicated))
+        except Exception:
+            pass
+
     # 5. Track sources
     sources = list({r.get("source", "unknown") for r in deduplicated})
 
@@ -95,7 +123,9 @@ def _is_chinese(text: str) -> bool:
     return any("一" <= c <= "鿿" for c in text)
 
 
-async def _parallel_collect(queries: list[str]) -> tuple[list[dict], list[str]]:
+async def _parallel_collect(
+    queries: list[str], since_days: int | None = None
+) -> tuple[list[dict], list[str]]:
     """Collect resources from multiple sources in parallel.
 
     策略：
@@ -112,6 +142,9 @@ async def _parallel_collect(queries: list[str]) -> tuple[list[dict], list[str]]:
 
     tasks = []
     task_labels = []
+    extra: dict[str, Any] = {}
+    if since_days is not None:
+        extra["since_days"] = since_days
 
     # 分离中英文查询
     zh_queries = [q for q in queries if _is_chinese(q)][:3]
@@ -119,21 +152,21 @@ async def _parallel_collect(queries: list[str]) -> tuple[list[dict], list[str]]:
 
     # 中文查询 → 仅 web search
     for query in zh_queries:
-        tasks.append(_safe_invoke(web_search, {"query": query, "max_results": 15}))
+        tasks.append(_safe_invoke(web_search, {"query": query, "max_results": 15, **extra}))
         task_labels.append(f"web: {query[:30]}")
 
     # 英文查询 → 所有 4 个源
     for query in en_queries:
-        tasks.append(_safe_invoke(web_search, {"query": query, "max_results": 15}))
+        tasks.append(_safe_invoke(web_search, {"query": query, "max_results": 15, **extra}))
         task_labels.append(f"web: {query[:30]}")
 
-        tasks.append(_safe_invoke(arxiv_search, {"query": query, "max_results": 10}))
+        tasks.append(_safe_invoke(arxiv_search, {"query": query, "max_results": 10, **extra}))
         task_labels.append(f"arxiv: {query[:30]}")
 
-        tasks.append(_safe_invoke(youtube_search, {"query": query, "max_results": 10}))
+        tasks.append(_safe_invoke(youtube_search, {"query": query, "max_results": 10, **extra}))
         task_labels.append(f"youtube: {query[:30]}")
 
-        tasks.append(_safe_invoke(github_search, {"query": query}))
+        tasks.append(_safe_invoke(github_search, {"query": query, **extra}))
         task_labels.append(f"github: {query[:30]}")
 
     results = await asyncio.gather(*tasks, return_exceptions=True)

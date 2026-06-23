@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from sqlmodel import SQLModel, create_engine, Session, select
@@ -118,6 +119,101 @@ def get_resources_by_project(project_id: str) -> list[Resource]:
             .order_by(Resource.quality_score.desc())
         )
         return list(session.exec(statement).all())
+
+
+# ── Update tracking helpers ──────────────────────────────────
+
+
+def record_update(
+    resource_id: str,
+    change_type: str,
+    old_hash: str | None = None,
+    new_hash: str | None = None,
+) -> Update:
+    """Record a resource change in the updates table."""
+    update = Update(
+        resource_id=resource_id,
+        change_type=change_type,
+        old_hash=old_hash,
+        new_hash=new_hash,
+    )
+    with get_session() as session:
+        session.add(update)
+        session.commit()
+        session.refresh(update)
+    return update
+
+
+def get_updates_since(project_id: str, since: datetime) -> list[Update]:
+    """Get all updates for a project since a given datetime."""
+    with get_session() as session:
+        statement = (
+            select(Update)
+            .join(Resource, Update.resource_id == Resource.id)
+            .where(Resource.project_id == project_id)
+            .where(Update.detected_at >= since)
+            .order_by(Update.detected_at.desc())
+        )
+        return list(session.exec(statement).all())
+
+
+def get_update_summary(project_id: str, since: datetime | None = None) -> dict:
+    """Aggregate update counts by change_type."""
+    with get_session() as session:
+        statement = (
+            select(Update)
+            .join(Resource, Update.resource_id == Resource.id)
+            .where(Resource.project_id == project_id)
+        )
+        if since:
+            statement = statement.where(Update.detected_at >= since)
+        updates = list(session.exec(statement).all())
+
+    summary = {"new": 0, "updated": 0, "removed": 0}
+    for u in updates:
+        if u.change_type in summary:
+            summary[u.change_type] += 1
+    return summary
+
+
+def get_existing_urls(project_id: str) -> set[str]:
+    """Get all existing resource URLs for a project (for dedup)."""
+    with get_session() as session:
+        statement = select(Resource.url).where(Resource.project_id == project_id)
+        return set(session.exec(statement).all())
+
+
+def get_last_crawl_date(project_id: str) -> datetime | None:
+    """Get the most recent completed crawl timestamp for a project."""
+    with get_session() as session:
+        statement = (
+            select(CrawlTask.completed_at)
+            .where(CrawlTask.project_id == project_id)
+            .where(CrawlTask.status == "done")
+            .order_by(CrawlTask.completed_at.desc())
+            .limit(1)
+        )
+        result = session.exec(statement).first()
+        return result
+
+
+def record_crawl_task(
+    project_id: str, query: str, source: str, result_count: int = 0
+) -> CrawlTask:
+    """Record a completed crawl task."""
+    task = CrawlTask(
+        project_id=project_id,
+        query=query,
+        source=source,
+        status="done",
+        result_count=result_count,
+        completed_at=datetime.utcnow(),
+    )
+    with get_session() as session:
+        session.add(task)
+        session.commit()
+        session.refresh(task)
+    return task
 
 
 # select is already imported at the top

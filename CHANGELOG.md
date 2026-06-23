@@ -125,10 +125,59 @@ Format: `phase(<N>): <title> ✓`
 
 ---
 
-next:
-- [ ] Phase 4: 持续更新引擎 (增量采集/变更检测/定时更新)
+---
+
+## phase(4): 持续更新引擎 ✓
+
+**日期**: 2026-06-23
+
+### 搜索工具日期过滤
+- 所有 5 个搜索源新增 `since_days` 参数: SerpAPI (tbs), Tavily (days), arXiv (submittedDate), YouTube (publishedAfter), GitHub (created:>=)
+- 新增 `_since_iso` / `_since_yyyymmdd` / `_since_date` 辅助函数
+
+### 增量采集模式
+- Collector 新增 `incremental` + `since_days` state 字段
+- 增量模式: 查询已有 URL 集合加入 avoid_set, 自动计算 since_days
+- 采集后记录 `crawl_tasks` 表用于追踪上次采集时间
+
+### 全文内容哈希
+- `fetch_page` 返回 `content_hash` (sha256 of full text)
+- 比原有 collector 的 md5(snippet+title) 更准确
+
+### 变更检测 (updater.py)
+- `check_updates()`: 并发 8 路 fetch, 比对 content_hash, 记录 updates 表
+- `incremental_collect()`: 对已有项目增量采集新资源
+- `apply_updates()`: 增量采集 + 变更检测 + 自动重建站点
+- `UpdateReport` 数据类: 统计 new/updated/removed/unchanged/errors
+
+### 定时调度 (scheduler.py)
+- `start_scheduler()`: asyncio 定时循环, 读取 openlearning.yaml 配置
+- `run_once()`: 单次更新检查
+- 支持 daily/weekly/monthly 间隔
+
+### CLI 命令
+- `openlearning update check <id>`: 检查变更, 显示报告
+- `openlearning update apply <id>`: 增量采集 + 变更检测 + 重建站点
+- `openlearning update watch <id>`: 前台定时更新 (Ctrl+C 停止)
+
+### 数据库辅助函数
+- `record_update()`: 写入 updates 表
+- `get_updates_since()`: 查询指定时间后的变更
+- `get_update_summary()`: 聚合统计 (new/updated/removed counts)
+- `get_existing_urls()`: 获取项目已有 URL 集合
+- `get_last_crawl_date()`: 获取上次采集时间
+- `record_crawl_task()`: 记录采集任务
+
+### AgentState 扩展
+- 新增 `incremental`, `since_days`, `update_report` 字段
+
+### 测试
+- test_updater.py: UpdateReport / check_updates (mock fetch) / date helpers
+- test_search_incremental.py: 5 个搜索源的 since_days 参数验证
 
 ---
+
+next:
 
 ## phase(5): 内容质量 + Supervisor + Memory ✓
 
