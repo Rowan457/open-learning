@@ -11,7 +11,7 @@ llm:
   models:
     pro: "mimo-v2.5-pro"
     standard: "mimo-v2.5"
-    lite: "mimo-7b"
+    lite: "mimo-v2.5"
 
   # 任务→模型映射
   routing:
@@ -35,7 +35,6 @@ llm:
   cost:
     mimo-v2.5-pro: 15.0
     mimo-v2.5: 5.0
-    mimo-7b: 0.5
 
 # Skill 配置
 skills:

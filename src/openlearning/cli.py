@@ -439,13 +439,14 @@ def _run_collect(
     ) as progress:
         task = progress.add_task("运行 Agent Pipeline...", total=None)
 
-        # Run the pipeline
+        # Run the pipeline with project_id for targeted update
         try:
             result = asyncio.run(
                 run_pipeline(
                     user_request=topic,
                     user_profile=profile,
                     max_iterations=max_iterations,
+                    project_id=project_id,
                 )
             )
         except Exception as e:

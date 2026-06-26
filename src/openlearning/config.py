@@ -19,7 +19,7 @@ class LLMModels(BaseModel):
 
     pro: str = "mimo-v2.5-pro"
     standard: str = "mimo-v2.5"
-    lite: str = "mimo-7b"
+    lite: str = "mimo-v2.5"
 
 
 class LLMRouting(BaseModel):
@@ -32,8 +32,6 @@ class LLMRouting(BaseModel):
     analyzer_tag: str = "lite"
     analyzer_summarize: str = "lite"
     evaluator: str = "lite"
-    tool_router: str = "standard"
-    reflector: str = "pro"
     builder: str = "lite"
 
 
@@ -42,7 +40,6 @@ class LLMCost(BaseModel):
 
     mimo_v2_5_pro: float = Field(15.0, alias="mimo-v2.5-pro")
     mimo_v2_5: float = Field(5.0, alias="mimo-v2.5")
-    mimo_7b: float = Field(0.5, alias="mimo-7b")
 
     model_config = {"populate_by_name": True}
 
@@ -129,6 +126,15 @@ class UpdatesConfig(BaseModel):
     auto_regenerate: bool = True
 
 
+class ResearchConfig(BaseModel):
+    """Three-layer nested graph research configuration."""
+
+    max_concurrent_workers: int = 3
+    max_research_iterations: int = 5
+    max_worker_tool_calls: int = 10
+    compression_model_tier: str = "lite"
+
+
 # ── LangSmith Configuration ──────────────────────────────────
 
 class LangSmithTracing(BaseModel):
@@ -174,6 +180,7 @@ class OpenLearningConfig(BaseSettings):
     skills: SkillsConfig = SkillsConfig()
     site: SiteConfig = SiteConfig()
     updates: UpdatesConfig = UpdatesConfig()
+    research: ResearchConfig = ResearchConfig()
     langsmith: LangSmithConfig = LangSmithConfig()
 
     # Database

@@ -24,7 +24,7 @@ async def collector_agent(state: AgentState) -> dict[str, Any]:
     Writes: raw_resources, collected_count, sources_queried
     """
     queries = state.get("search_queries", [])
-    project_id = state.get("learning_plan", {}).get("project_id", "")
+    project_id = state.get("project_id", "") or state.get("learning_plan", {}).get("project_id", "")
     incremental = state.get("incremental", False)
     since_days = state.get("since_days")
 
@@ -177,6 +177,12 @@ async def _parallel_collect(
         tasks.append(_safe_invoke(github_search, {"query": query, **extra}))
         task_labels.append(f"github: {query[:30]}")
 
+    # 插件搜索（所有启用的自定义数据源）
+    plugin_queries = (zh_queries + en_queries)[:3]  # 最多 3 个查询用插件
+    for query in plugin_queries:
+        tasks.append(_plugin_search(query, max_results=10))
+        task_labels.append(f"plugin: {query[:30]}")
+
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     # Flatten results and collect errors
@@ -190,6 +196,17 @@ async def _parallel_collect(
             errors.append(f"[{label}] {type(result).__name__}: {result}")
 
     return all_resources, errors
+
+
+async def _plugin_search(query: str, max_results: int = 10) -> list[dict]:
+    """使用所有已启用插件搜索资源。"""
+    try:
+        from openlearning.plugins.manager import PluginManager
+        pm = PluginManager()
+        pm.discover()
+        return await pm.search_all(query, max_results=max_results)
+    except Exception:
+        return []
 
 
 async def _safe_invoke(tool, input_data: dict) -> list[dict]:

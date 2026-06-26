@@ -192,8 +192,6 @@ async def apply_updates(project_id: str, since_days: int = 7) -> dict:
 
     Returns a summary dict with {new, updated, removed, site_path}.
     """
-    from openlearning.database import get_update_summary
-
     # 1. Incremental collection (new resources)
     new_resources = await incremental_collect(project_id, since_days)
 
@@ -216,10 +214,7 @@ async def apply_updates(project_id: str, since_days: int = 7) -> dict:
 async def _rebuild_site(project_id: str) -> str | None:
     """Rebuild the static site for a project."""
     try:
-        from openlearning.agents.builder import _build_site_from_saved
-        # If builder exposes a standalone rebuild function, use it
         logger.info("重建站点...")
-        # Fallback: re-run the full builder
         from openlearning.skills.render import build_learning_system
         # Load saved data
         import json

@@ -23,6 +23,13 @@ FRONTEND_DIR = Path(__file__).parent / "frontend"
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    # 启动时初始化 LangSmith 追踪
+    try:
+        from openlearning.monitoring.tracer import init_tracing
+        init_tracing()
+    except Exception:
+        pass
+
     app = FastAPI(
         title="OpenLearning Web UI",
         description="AI 驱动的个人学习信息系统 — 管理面板",

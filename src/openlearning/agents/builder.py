@@ -288,23 +288,35 @@ def _get_node_importance(nodes: list[dict], node_id: str) -> float:
 
 
 def _match_resources_to_concepts(graph: dict, resources: list[dict]) -> dict[str, list[dict]]:
-    """Match resources to knowledge graph concepts."""
+    """Match resources to knowledge graph concepts.
+
+    策略：
+    1. 精确匹配：概念关键词出现在资源标题/摘要中
+    2. 主题兜底：所有资源的主题词匹配的概念也关联
+    """
     nodes = graph.get("nodes", [])
+    topic = graph.get("topic", "").lower()
     mapping: dict[str, list[dict]] = {}
 
     for node in nodes:
         node_id = node.get("id", "")
         node_name = node.get("name", "").lower()
-        node_keywords = node_name.replace("_", " ").split()
+        node_keywords = [kw for kw in node_name.replace("_", " ").split() if len(kw) > 2]
 
         matched = []
         for r in resources:
             title = r.get("title", "").lower()
-            snippet = r.get("snippet", "").lower()
+            snippet = r.get("snippet", "") or r.get("summary", "") or ""
+            snippet = snippet.lower()
             text = title + " " + snippet
 
-            # Check if any keyword appears in the resource
-            if any(kw in text for kw in node_keywords if len(kw) > 2):
+            # 精确匹配：概念关键词
+            if node_keywords and any(kw in text for kw in node_keywords):
+                matched.append(r)
+                continue
+
+            # 主题兜底：概念名包含主题词 且 资源也包含主题词
+            if topic and len(topic) > 2 and topic in node_name and topic in text:
                 matched.append(r)
 
         # Sort by quality score, take top 5
@@ -322,28 +334,46 @@ async def _persist_to_db(
 ) -> None:
     """Persist learning system data to database."""
     try:
-        from openlearning.database import save_learning_system, get_project
+        from openlearning.database import (
+            create_project,
+            get_project,
+            list_projects,
+            save_learning_system,
+        )
 
         # Find or create project
         user_request = state.get("user_request", "Untitled")
-        projects = __import__("openlearning.database", fromlist=["list_projects"]).list_projects()
-        project_id = None
-        for p in projects:
-            if p.title == user_request:
-                project_id = p.id
-                break
+        project_id = state.get("project_id", "")
 
+        # If project_id provided, verify it exists
+        if project_id:
+            project = get_project(project_id)
+            if not project:
+                project_id = ""  # Invalid ID, fall back to title search
+
+        # Fall back to title search
         if not project_id:
-            # Will be created by _save_project
-            pass
-        else:
-            save_learning_system(
-                project_id=project_id,
-                knowledge_graph=graph,
-                learning_path=path,
-                knowledge_resources=resources,
+            projects = list_projects()
+            for p in projects:
+                if p.title == user_request:
+                    project_id = p.id
+                    break
+
+        # Create if still not found
+        if not project_id:
+            project = create_project(
+                title=user_request,
+                description=f"Auto-generated from: {user_request}",
             )
-            logger.info("学习系统已持久化到数据库 (project: %s)", project_id)
+            project_id = project.id
+
+        save_learning_system(
+            project_id=project_id,
+            knowledge_graph=graph,
+            learning_path=path,
+            knowledge_resources=resources,
+        )
+        logger.info("学习系统已持久化到数据库 (project: %s)", project_id)
     except Exception as e:
         logger.error("✗ 数据库持久化失败: %s", e)
 
@@ -351,11 +381,19 @@ async def _persist_to_db(
 async def _save_project(state: AgentState) -> None:
     """Save the project to database for future memory."""
     try:
-        from openlearning.database import create_project
+        from openlearning.database import create_project, list_projects
+
+        user_request = state.get("user_request", "Untitled")
+
+        # Check if project with same title already exists
+        existing = list_projects()
+        for p in existing:
+            if p.title == user_request:
+                return  # Already exists, skip creation
 
         create_project(
-            title=state.get("user_request", "Untitled"),
-            description=f"Auto-generated from: {state.get('user_request', '')}",
+            title=user_request,
+            description=f"Auto-generated from: {user_request}",
         )
     except Exception:
         pass

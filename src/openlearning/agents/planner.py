@@ -317,8 +317,6 @@ def _extract_english_keywords(topic: str, subtopics: list[str]) -> str:
     2. 如果英文太短（<3字符），尝试组合子主题
     3. 如果全是中文，用 LLM 翻译或返回原主题
     """
-    import re
-
     # 提取主题中的英文单词
     en_words = [w for w in re.findall(r"[a-zA-Z]+", topic) if len(w) > 1]
 

@@ -257,7 +257,7 @@ const ProjectDetailPage = {
             <table>
                 <thead><tr><th>标题</th><th>来源</th><th>质量</th><th>难度</th></tr></thead>
                 <tbody>
-                    <tr v-for="r in resources.slice(0,30)" :key="r.id">
+                    <tr v-for="r in resources" :key="r.id">
                         <td><a :href="r.url" target="_blank">{{ r.title }}</a></td>
                         <td><badge :text="r.source" variant="gray" /></td>
                         <td :style="{ color: sc(r.quality_score) }">{{ r.quality_score ? r.quality_score.toFixed(1) : '-' }}</td>
@@ -266,6 +266,11 @@ const ProjectDetailPage = {
                     <tr v-if="!resources.length"><td colspan="4" class="empty-state">暂无资源</td></tr>
                 </tbody>
             </table>
+            <div v-if="totalPages > 1" class="pagination">
+                <button class="btn btn-outline btn-sm" :disabled="page<=1" @click="goPage(page-1)">‹ 上一页</button>
+                <span class="page-info">{{ page }} / {{ totalPages }} (共 {{ total }} 条)</span>
+                <button class="btn btn-outline btn-sm" :disabled="page>=totalPages" @click="goPage(page+1)">下一页 ›</button>
+            </div>
         </div>
     </div>
     <div v-else class="loading"><div class="spinner"></div><p>加载中...</p></div>
@@ -276,6 +281,9 @@ const ProjectDetailPage = {
         const project = ref(null)
         const resources = ref([])
         const collecting = ref(false)
+        const page = ref(1)
+        const totalPages = ref(1)
+        const total = ref(0)
         const srcCount = computed(() => Object.keys(project.value?.sources || {}).length)
 
         async function load() {
@@ -283,9 +291,14 @@ const ProjectDetailPage = {
             try {
                 project.value = await api.get('/projects/' + pid)
                 currentProject.value = project.value
-                resources.value = await api.get('/projects/' + pid + '/resources')
+                const data = await api.get('/projects/' + pid + '/resources?page=' + page.value + '&page_size=30')
+                resources.value = Array.isArray(data) ? data : (data.items || [])
+                totalPages.value = data.total_pages || 1
+                total.value = data.total || 0
             } catch (e) { console.error(e) }
         }
+
+        function goPage(p) { page.value = p; load() }
 
         function go(page) { router.push('/projects/' + route.params.projectId + '/' + page) }
 
@@ -311,7 +324,7 @@ const ProjectDetailPage = {
         function sc(s) { return s >= 7 ? 'var(--success)' : s >= 5 ? 'var(--warning)' : 'var(--danger)' }
 
         onMounted(load)
-        return { project, resources, collecting, srcCount, go, collect, exportMd, sc }
+        return { project, resources, collecting, srcCount, go, collect, exportMd, sc, page, totalPages, total, goPage }
     },
 }
 
@@ -719,6 +732,18 @@ const ConceptDetailPage = {
         <div class="card concept-card tip" v-if="node.learning_tips">
             <h2>💡 学习建议</h2>
             <p style="font-style:italic">{{ node.learning_tips }}</p>
+        </div>
+
+        <div class="card" v-if="node.references && node.references.length">
+            <h2>📌 参考来源</h2>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">以下资源为本知识点的生成提供了内容参考</p>
+            <div v-for="(ref,i) in node.references" :key="i" style="margin-bottom:8px;padding:8px 12px;background:var(--bg);border-radius:6px">
+                <a :href="ref.url" target="_blank" style="font-weight:500;color:var(--primary)">{{ ref.title || ref.url }}</a>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:2px">
+                    <badge v-if="ref.source" :text="ref.source" variant="gray" />
+                    <span v-if="ref.quality_score" style="margin-left:8px">质量: {{ ref.quality_score.toFixed(1) }}/10</span>
+                </div>
+            </div>
         </div>
 
         <div class="card" v-if="dt.prerequisites && dt.prerequisites.length">

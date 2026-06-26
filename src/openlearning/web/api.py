@@ -132,16 +132,20 @@ async def delete_project_endpoint(project_id: str) -> dict[str, str]:
 @api_router.get("/projects/{project_id}/resources")
 async def list_resources(
     project_id: str,
-    limit: int = Query(default=100, le=500),
-) -> list[dict[str, Any]]:
-    """List resources for a project."""
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=30, ge=1, le=200),
+) -> dict[str, Any]:
+    """List resources for a project with pagination."""
     init_db()
     project = get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
     resources = get_resources_by_project(project_id)
-    return [
+    total = len(resources)
+    start = (page - 1) * page_size
+    end = start + page_size
+    items = [
         {
             "id": r.id,
             "title": r.title,
@@ -154,8 +158,15 @@ async def list_resources(
             "summary": r.summary,
             "fetched_at": str(r.fetched_at)[:19] if r.fetched_at else None,
         }
-        for r in resources[:limit]
+        for r in resources[start:end]
     ]
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size,
+    }
 
 
 # ── Collection Endpoint ─────────────────────────────────────
@@ -176,6 +187,8 @@ async def trigger_collection(project_id: str) -> dict[str, Any]:
             user_request=project.title,
             user_profile={"level": "beginner", "lang": ["zh", "en"], "user_id": "default"},
             max_iterations=2,
+            project_id=project_id,
+            incremental=True,
         )
 
         # Persist collected data to database
@@ -187,10 +200,21 @@ async def trigger_collection(project_id: str) -> dict[str, Any]:
             from openlearning.database import save_learning_system
             save_learning_system(project_id, kg, lp, kr)
 
+        # 获取 LangSmith 追踪 URL
+        trace_url = None
+        try:
+            from openlearning.monitoring.tracer import get_current_run_id, get_trace_url
+            run_id = get_current_run_id()
+            if run_id:
+                trace_url = get_trace_url(run_id)
+        except Exception:
+            pass
+
         return {
             "status": "completed",
             "resources_collected": len(result.get("analyzed_resources", [])),
             "knowledge_graph_nodes": len(kg.get("nodes", [])),
+            "trace_url": trace_url,
         }
     except Exception as e:
         return {
@@ -383,12 +407,51 @@ async def get_concept_detail(project_id: str, concept_id: str) -> dict[str, Any]
         if e.get("type") == "related"
     ]
 
-    # Find resources (from knowledge_resources map or node references)
+    # Find resources (from multiple sources, merge and dedup)
     all_resources = _load_knowledge_resources(project_id)
-    resources = all_resources.get(concept_id, [])
-    # Also include node's own references (saved during collection)
+    resources = list(all_resources.get(concept_id, []))
+
+    # Add node's own references (saved during builder enrichment)
+    node_refs = node.get("references", [])
+    existing_urls = {r.get("url", "") for r in resources}
+    for ref in node_refs:
+        if ref.get("url", "") not in existing_urls:
+            resources.append(ref)
+            existing_urls.add(ref["url"])
+
+    # If still no resources, search by concept keywords in DB
     if not resources:
-        resources = node.get("references", [])
+        concept_name = node.get("name", "")
+        if concept_name:
+            try:
+                from openlearning.database import get_session, select
+                from openlearning.models import Resource
+                from sqlalchemy import func, or_
+                with get_session() as session:
+                    # 按概念名的关键词搜索（忽略大小写）
+                    keywords = [kw for kw in concept_name.lower().split() if len(kw) > 2]
+                    if keywords:
+                        conditions = [
+                            func.lower(Resource.title).contains(kw)
+                            for kw in keywords[:3]
+                        ]
+                        db_resources = session.exec(
+                            select(Resource).where(
+                                Resource.project_id == project_id,
+                                or_(*conditions),
+                            ).limit(5)
+                        ).all()
+                        for r in db_resources:
+                            if r.url not in existing_urls:
+                                resources.append({
+                                    "title": r.title or "",
+                                    "url": r.url or "",
+                                    "source": r.source or "",
+                                    "quality_score": r.quality_score or 0,
+                                })
+                                existing_urls.add(r.url)
+            except Exception:
+                pass
 
     return {
         "node": node,
@@ -413,6 +476,24 @@ def _find_node(nodes: list[dict], node_id: str) -> dict | None:
         if n["id"] == node_id:
             return n
     return None
+
+
+# ── LangSmith Status ────────────────────────────────────────
+
+
+@api_router.get("/langsmith/status")
+async def langsmith_status() -> dict[str, Any]:
+    """Get LangSmith tracing status."""
+    try:
+        from openlearning.monitoring.tracer import init_tracing
+        result = init_tracing()
+        return {
+            "enabled": result.get("enabled", False),
+            "project": result.get("project", ""),
+            "reason": result.get("reason", ""),
+        }
+    except Exception as e:
+        return {"enabled": False, "reason": str(e)}
 
 
 # ── Plugin Endpoints ────────────────────────────────────────

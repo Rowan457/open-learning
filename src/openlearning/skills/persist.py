@@ -53,6 +53,9 @@ async def save_resource(resource: dict) -> dict[str, Any]:
 
         if existing:
             # Update
+            new_project_id = resource.get("project_id", "")
+            if new_project_id and not existing.project_id:
+                existing.project_id = new_project_id
             for key in [
                 "title", "summary", "quality_score", "difficulty",
                 "content_hash", "key_points", "resource_type",

@@ -1,54 +1,10 @@
 """Evaluation Engine — rule-based quality/coverage/diversity checks.
 
 No LLM cost — pure rule engine.
+Used by tools.py EvaluateQuality tool.
 """
 
 from __future__ import annotations
-
-from typing import Any
-
-from openlearning.agents.state import AgentState
-
-
-async def evaluator_engine(state: AgentState) -> dict[str, Any]:
-    """Evaluation Engine: rule-driven quality/coverage/diversity/freshness checks.
-
-    Reads: analyzed_resources, knowledge_graph, iteration
-    Writes: evaluation, iteration
-    """
-    resources = state.get("analyzed_resources", [])
-    graph = state.get("knowledge_graph", {})
-    iteration = state.get("iteration", 0)
-    max_iterations = state.get("max_iterations", 3)
-
-    # 1. Quality check (avg ≥ 5.0, single ≥ 3.0)
-    quality = _check_quality(resources, min_avg=5.0, min_single=3.0)
-
-    # 2. Coverage check (≥ 60% nodes covered)
-    coverage = _check_coverage(graph, resources)
-
-    # 3. Diversity check (≥ 3 types)
-    diversity = _check_diversity(resources, min_types=3)
-
-    # 4. Freshness check (≥ 20% recent among dated resources)
-    freshness = _check_freshness(resources, min_recent_ratio=0.2)
-
-    # 5. Overall judgment
-    all_passed = all([quality["pass"], coverage["pass"], diversity["pass"], freshness["pass"]])
-    forced_pass = iteration >= max_iterations
-
-    return {
-        "evaluation": {
-            "pass": all_passed or forced_pass,
-            "quality": quality,
-            "coverage": coverage,
-            "diversity": diversity,
-            "freshness": freshness,
-            "forced_pass": forced_pass,
-        },
-        "iteration": iteration + 1,
-        "current_agent": "evaluator",
-    }
 
 
 def _check_quality(resources: list[dict], min_avg: float = 5.0, min_single: float = 3.0) -> dict:

@@ -866,3 +866,21 @@ tr:hover td {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
+
+/* ── Pagination ─────────────────────────────────────────── */
+
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.page-info {
+    font-size: 13px;
+    color: var(--text-light);
+}
+}

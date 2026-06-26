@@ -66,7 +66,6 @@ def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
     price_map = {
         "mimo-v2.5-pro": 15.0,
         "mimo-v2.5": 5.0,
-        "mimo-7b": 0.5,
     }
 
     price = price_map.get(model, 5.0)
