@@ -88,13 +88,13 @@ async def update_mastery(
 ) -> dict[str, Any]:
     """更新概念掌握度。
 
-    基于学习事件调整 mastery 值和间隔重复参数。
+    基于学习事件，使用多维度加权计算掌握度（含遗忘衰减）。
     返回 {success, new_mastery, next_review}。
     """
     from datetime import timedelta
 
     from openlearning.database import get_engine
-    from openlearning.memory.mastery import schedule_review
+    from openlearning.memory.mastery import calculate_mastery, decay_mastery, schedule_review
 
     engine = get_engine()
     now = datetime.now(timezone.utc)
@@ -109,13 +109,15 @@ async def update_mastery(
         ).fetchone()
 
         if result:
-            current_mastery = result.mastery
-            stability = result.stability
-            review_count = result.review_count
+            current_mastery = result.mastery or 0.0
+            stability = result.stability or 1.0
+            review_count = result.review_count or 0
+            last_practiced = result.last_practiced
         else:
             current_mastery = 0.0
             stability = 1.0
             review_count = 0
+            last_practiced = None
             conn.execute(
                 text("""
                     INSERT INTO concept_mastery (id, user_id, concept_id, mastery, stability, review_count, learned_at, updated_at)
@@ -124,21 +126,39 @@ async def update_mastery(
                 {"id": f"{user_id}_{concept_id}", "uid": user_id, "cid": concept_id, "now": now},
             )
 
-        # Calculate new mastery based on event
-        mastery_delta = {
-            "started": 0.1,
-            "practiced": 0.15,
-            "mastered": 0.4,
-            "reviewed": 0.1,
-            "tested": 0.0,
+        # 1. 遗忘衰减：根据距上次学习的天数衰减当前掌握度
+        if last_practiced:
+            days_since = (now - last_practiced).days
+            decayed_mastery = decay_mastery(current_mastery, days_since)
+        else:
+            decayed_mastery = current_mastery
+
+        # 2. 从事件中提取多维度信号
+        # 事件类型映射到信号强度
+        event_signals = {
+            "started":    {"resource_completion": 0.2, "recency_days": 0},
+            "practiced":  {"resource_completion": 0.5, "recency_days": 0},
+            "mastered":   {"resource_completion": 1.0, "recency_days": 0},
+            "reviewed":   {"recency_days": 0},
+            "tested":     {"recency_days": 0},
         }
-        delta = mastery_delta.get(event, 0.1)
-        if event == "tested" and score is not None:
-            delta = (score / 100.0) * 0.3
+        signals = event_signals.get(event, {"recency_days": 0})
 
-        new_mastery = min(1.0, current_mastery + delta)
+        # 3. 多维度加权计算新掌握度
+        new_mastery = calculate_mastery(
+            resource_completion=signals.get("resource_completion", decayed_mastery),
+            quiz_score=(score / 100.0) if score is not None else 0.0,
+            time_spent=float(time_spent) if time_spent else 0.0,
+            recency_days=signals.get("recency_days", 0),
+            review_count=review_count + 1,
+            self_report=0.0,
+        )
 
-        # Use shared SM-2 logic from memory/mastery.py
+        # 4. 取衰减值和新计算值的较高者（避免单次学习导致掌握度下降）
+        new_mastery = max(decayed_mastery, new_mastery)
+        new_mastery = min(1.0, max(0.0, new_mastery))
+
+        # 5. SM-2 间隔重复调度
         review = schedule_review(new_mastery, stability)
         interval = review["next_review_days"]
         new_stability = review["stability"]
