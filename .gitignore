@@ -40,3 +40,4 @@ Thumbs.db
 # Node (if needed for frontend)
 node_modules/
 PROJECT_SPECS.md
+docs/
