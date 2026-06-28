@@ -402,7 +402,7 @@ async def _save_project(state: AgentState) -> None:
 async def _record_learning_events(user_id: str, graph: dict) -> None:
     """Record 'started' events for all concepts in the generated learning system."""
     try:
-        from openlearning.skills.memory import record_event
+        from openlearning.tools.memory import record_event
 
         nodes = graph.get("nodes", [])
         for node in nodes[:20]:  # Limit to avoid too many events

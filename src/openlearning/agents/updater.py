@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from openlearning.log import get_logger
-from openlearning.skills.fetch import fetch_page
+from openlearning.tools.fetch import fetch_page
 
 logger = get_logger("Updater")
 
@@ -215,7 +215,7 @@ async def _rebuild_site(project_id: str) -> str | None:
     """Rebuild the static site for a project."""
     try:
         logger.info("重建站点...")
-        from openlearning.skills.render import build_learning_system
+        from openlearning.tools.render import build_learning_system
         # Load saved data
         import json
         from pathlib import Path

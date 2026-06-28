@@ -39,7 +39,7 @@ llm:
 # Skill 配置
 skills:
   search:
-    module: openlearning.skills.search
+    module: openlearning.tools.search
     enabled: true
     providers:
       tavily:
@@ -54,24 +54,24 @@ skills:
       github:
         api_key: ${GITHUB_TOKEN}
   fetch:
-    module: openlearning.skills.fetch
+    module: openlearning.tools.fetch
     enabled: true
     timeout: 30
     respect_robots: true
   analyze:
-    module: openlearning.skills.analyze
+    module: openlearning.tools.analyze
     enabled: true
   persist:
-    module: openlearning.skills.persist
+    module: openlearning.tools.persist
     enabled: true
   render:
-    module: openlearning.skills.render
+    module: openlearning.tools.render
     enabled: true
   memory:
-    module: openlearning.skills.memory
+    module: openlearning.tools.memory
     enabled: true
   git:
-    module: openlearning.skills.git
+    module: openlearning.tools.git
     enabled: true
 
 # 站点生成

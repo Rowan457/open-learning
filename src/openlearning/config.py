@@ -72,7 +72,7 @@ class SearchProviderConfig(BaseModel):
 class SearchSkillConfig(BaseModel):
     """Search skill configuration."""
 
-    module: str = "openlearning.skills.search"
+    module: str = "openlearning.tools.search"
     enabled: bool = True
     providers: dict[str, SearchProviderConfig] = {}
 
@@ -80,7 +80,7 @@ class SearchSkillConfig(BaseModel):
 class FetchSkillConfig(BaseModel):
     """Fetch skill configuration."""
 
-    module: str = "openlearning.skills.fetch"
+    module: str = "openlearning.tools.fetch"
     enabled: bool = True
     timeout: int = 30
     respect_robots: bool = True
@@ -98,10 +98,10 @@ class SkillsConfig(BaseModel):
 
     search: SearchSkillConfig = SearchSkillConfig()
     fetch: FetchSkillConfig = FetchSkillConfig()
-    analyze: GenericSkillConfig = GenericSkillConfig(module="openlearning.skills.analyze")
-    persist: GenericSkillConfig = GenericSkillConfig(module="openlearning.skills.persist")
-    render: GenericSkillConfig = GenericSkillConfig(module="openlearning.skills.render")
-    memory: GenericSkillConfig = GenericSkillConfig(module="openlearning.skills.memory")
+    analyze: GenericSkillConfig = GenericSkillConfig(module="openlearning.tools.analyze")
+    persist: GenericSkillConfig = GenericSkillConfig(module="openlearning.tools.persist")
+    render: GenericSkillConfig = GenericSkillConfig(module="openlearning.tools.render")
+    memory: GenericSkillConfig = GenericSkillConfig(module="openlearning.tools.memory")
 
 
 # ── Site Configuration ───────────────────────────────────────
@@ -170,6 +170,15 @@ class LangSmithConfig(BaseModel):
     alerts: LangSmithAlerts = LangSmithAlerts()
 
 
+# ── Network Configuration ───────────────────────────────────
+
+class NetworkConfig(BaseModel):
+    """HTTP proxy configuration."""
+
+    http_proxy: str = ""
+    https_proxy: str = ""
+
+
 # ── Main Configuration ───────────────────────────────────────
 
 class OpenLearningConfig(BaseSettings):
@@ -177,6 +186,7 @@ class OpenLearningConfig(BaseSettings):
 
     version: str = "1.0"
     llm: LLMConfig = LLMConfig()
+    network: NetworkConfig = NetworkConfig()
     skills: SkillsConfig = SkillsConfig()
     site: SiteConfig = SiteConfig()
     updates: UpdatesConfig = UpdatesConfig()
@@ -242,6 +252,13 @@ def get_config() -> OpenLearningConfig:
     return _config
 
 
+def get_proxy() -> str | None:
+    """Get HTTPS proxy URL for httpx requests."""
+    cfg = get_config()
+    proxy = cfg.network.https_proxy or cfg.network.http_proxy
+    return proxy or None
+
+
 def _collect_env_overrides() -> dict[str, Any]:
     """Collect configuration overrides from environment variables."""
     overrides: dict[str, Any] = {}
@@ -268,6 +285,14 @@ def _collect_env_overrides() -> dict[str, Any]:
             "github"
         ] = {"api_key": token}
     if key := os.environ.get("LANGSMITH_API_KEY"):
+        overrides.setdefault("langsmith", {})["api_key"] = key
+
+    # Proxy (from env vars)
+    http_proxy = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or ""
+    https_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
+    if http_proxy or https_proxy:
+        overrides.setdefault("network", {})["http_proxy"] = http_proxy
+        overrides.setdefault("network", {})["https_proxy"] = https_proxy
         overrides.setdefault("langsmith", {})["api_key"] = key
 
     return overrides

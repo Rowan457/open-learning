@@ -114,7 +114,7 @@ def _find_similar_project(history: list[dict], request: str) -> dict | None:
 async def _learn_preferences(user_id: str) -> dict:
     """Learn user preferences from interactions."""
     try:
-        from openlearning.skills.memory import get_preferences
+        from openlearning.tools.memory import get_preferences
 
         prefs = await get_preferences.ainvoke({"user_id": user_id})
 
@@ -156,7 +156,7 @@ async def _learn_preferences(user_id: str) -> dict:
 async def _query_mastery(user_id: str) -> dict:
     """Query concept mastery data."""
     try:
-        from openlearning.skills.memory import get_mastery
+        from openlearning.tools.memory import get_mastery
 
         mastery_list = await get_mastery.ainvoke({"user_id": user_id})
 

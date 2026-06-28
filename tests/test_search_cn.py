@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 class TestBilibiliSearch:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        from openlearning.skills.search import bilibili_search
+        from openlearning.tools.search import bilibili_search
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -40,7 +40,7 @@ class TestBilibiliSearch:
         }
         mock_response.raise_for_status = MagicMock()
 
-        with patch("openlearning.skills.search.httpx.AsyncClient") as mock_client:
+        with patch("openlearning.tools.search.httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__ = AsyncMock(return_value=MagicMock(
                 get=AsyncMock(return_value=mock_response)
             ))
@@ -57,7 +57,7 @@ class TestBilibiliSearch:
 
     @pytest.mark.asyncio
     async def test_html_stripped(self):
-        from openlearning.skills.search import bilibili_search
+        from openlearning.tools.search import bilibili_search
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -76,7 +76,7 @@ class TestBilibiliSearch:
         }
         mock_response.raise_for_status = MagicMock()
 
-        with patch("openlearning.skills.search.httpx.AsyncClient") as mock_client:
+        with patch("openlearning.tools.search.httpx.AsyncClient") as mock_client:
             mock_client.return_value.__aenter__ = AsyncMock(return_value=MagicMock(
                 get=AsyncMock(return_value=mock_response)
             ))
@@ -94,7 +94,7 @@ class TestBilibiliSearch:
 class TestZhihuSearch:
     @pytest.mark.asyncio
     async def test_basic_search(self):
-        from openlearning.skills.search import zhihu_search
+        from openlearning.tools.search import zhihu_search
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -126,7 +126,7 @@ class TestZhihuSearch:
         }
         mock_response.raise_for_status = MagicMock()
 
-        with patch("openlearning.skills.search.httpx.AsyncClient") as mock_client:
+        with patch("openlearning.tools.search.httpx.AsyncClient") as mock_client:
             mock_ctx = MagicMock()
             mock_ctx.get = AsyncMock(return_value=mock_response)
             mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
@@ -143,7 +143,7 @@ class TestZhihuSearch:
 
     @pytest.mark.asyncio
     async def test_html_stripped(self):
-        from openlearning.skills.search import zhihu_search
+        from openlearning.tools.search import zhihu_search
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -162,7 +162,7 @@ class TestZhihuSearch:
         }
         mock_response.raise_for_status = MagicMock()
 
-        with patch("openlearning.skills.search.httpx.AsyncClient") as mock_client:
+        with patch("openlearning.tools.search.httpx.AsyncClient") as mock_client:
             mock_ctx = MagicMock()
             mock_ctx.get = AsyncMock(return_value=mock_response)
             mock_client.return_value.__aenter__ = AsyncMock(return_value=mock_ctx)
@@ -179,7 +179,7 @@ class TestZhihuSearch:
 
 class TestStripHtml:
     def test_strip_tags(self):
-        from openlearning.skills.search import _strip_html
+        from openlearning.tools.search import _strip_html
 
         assert _strip_html("<p>hello</p>") == "hello"
         assert _strip_html("<em>Rust</em> 教程") == "Rust 教程"

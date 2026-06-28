@@ -546,7 +546,7 @@ def build(
     import asyncio
     from pathlib import Path
 
-    from openlearning.skills.render import build_learning_system
+    from openlearning.tools.render import build_learning_system
 
     data_dir = Path(output) / "data"
     kg_path = data_dir / "knowledge-graph.json"

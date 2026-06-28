@@ -103,19 +103,19 @@ def get_supervisor_tools() -> list:
 
 def get_worker_tools() -> list:
     """获取 Worker 可用的工具列表（搜索 + 抓取 + 分析 + 持久化 + 插件）。"""
-    from openlearning.skills.search import (
+    from openlearning.tools.search import (
         arxiv_search,
         github_search,
         web_search,
         youtube_search,
     )
-    from openlearning.skills.fetch import fetch_page
-    from openlearning.skills.analyze import (
+    from openlearning.tools.fetch import fetch_page
+    from openlearning.tools.analyze import (
         extract_knowledge,
         llm_summarize,
         summarize,
     )
-    from openlearning.skills.persist import save_resource
+    from openlearning.tools.persist import save_resource
 
     tools = [
         web_search,

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
-from openlearning.skills.search import (
+from openlearning.tools.search import (
     _duckduckgo_search,
     _serpapi_search,
     _tavily_search,
@@ -23,7 +23,7 @@ class TestSerpApiSinceDays:
         mock_resp.json.return_value = {"organic_results": []}
         mock_resp.raise_for_status = MagicMock()
 
-        with patch("openlearning.skills.search.httpx.AsyncClient") as MockClient:
+        with patch("openlearning.tools.search.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
             instance.get = AsyncMock(return_value=mock_resp)
             instance.__aenter__ = AsyncMock(return_value=instance)
@@ -43,7 +43,7 @@ class TestSerpApiSinceDays:
         mock_resp.json.return_value = {"organic_results": []}
         mock_resp.raise_for_status = MagicMock()
 
-        with patch("openlearning.skills.search.httpx.AsyncClient") as MockClient:
+        with patch("openlearning.tools.search.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
             instance.get = AsyncMock(return_value=mock_resp)
             instance.__aenter__ = AsyncMock(return_value=instance)
@@ -65,7 +65,7 @@ class TestTavilySinceDays:
         mock_resp.json.return_value = {"results": []}
         mock_resp.raise_for_status = MagicMock()
 
-        with patch("openlearning.skills.search.httpx.AsyncClient") as MockClient:
+        with patch("openlearning.tools.search.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
             instance.post = AsyncMock(return_value=mock_resp)
             instance.__aenter__ = AsyncMock(return_value=instance)
@@ -85,7 +85,7 @@ class TestTavilySinceDays:
         mock_resp.json.return_value = {"results": []}
         mock_resp.raise_for_status = MagicMock()
 
-        with patch("openlearning.skills.search.httpx.AsyncClient") as MockClient:
+        with patch("openlearning.tools.search.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
             instance.post = AsyncMock(return_value=mock_resp)
             instance.__aenter__ = AsyncMock(return_value=instance)
@@ -107,7 +107,7 @@ class TestDuckDuckGoSinceDays:
         mock_resp.text = "<html></html>"
         mock_resp.raise_for_status = MagicMock()
 
-        with patch("openlearning.skills.search.httpx.AsyncClient") as MockClient:
+        with patch("openlearning.tools.search.httpx.AsyncClient") as MockClient:
             instance = AsyncMock()
             instance.get = AsyncMock(return_value=mock_resp)
             instance.__aenter__ = AsyncMock(return_value=instance)

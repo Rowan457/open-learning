@@ -133,7 +133,7 @@ async def _parallel_collect(
     - 英文查询 → web + arXiv + YouTube + GitHub
     Returns (resources, errors).
     """
-    from openlearning.skills.search import (
+    from openlearning.tools.search import (
         arxiv_search,
         bilibili_search,
         github_search,
@@ -254,7 +254,7 @@ def _deduplicate(resources: list[dict], avoid_set: set[str]) -> list[dict]:
 async def _persist_resources(resources: list[dict]) -> None:
     """Save collected resources to database."""
     try:
-        from openlearning.skills.persist import save_resource
+        from openlearning.tools.persist import save_resource
 
         for r in resources[:50]:  # Limit batch size
             try:

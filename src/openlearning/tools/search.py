@@ -13,6 +13,15 @@ import httpx
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+
+def _httpx_client(**kwargs) -> httpx.AsyncClient:
+    """Create httpx client with proxy support."""
+    from openlearning.config import get_proxy
+    proxy = get_proxy()
+    if proxy:
+        kwargs["proxy"] = proxy
+    return httpx.AsyncClient(**kwargs)
+
 from openlearning.config import get_config
 
 
@@ -93,7 +102,7 @@ async def _tavily_search(
     if since_days is not None:
         payload["days"] = since_days
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with _httpx_client(timeout=30) as client:
         resp = await client.post(
             "https://api.tavily.com/search",
             json=payload,
@@ -134,7 +143,7 @@ async def _serpapi_search(
         else:
             params["tbs"] = f"cdr:1,cd_min:{_since_iso(since_days)}"
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with _httpx_client(timeout=30) as client:
         resp = await client.get(
             "https://serpapi.com/search",
             params=params,
@@ -168,7 +177,7 @@ async def _duckduckgo_search(
         else:
             params["df"] = "y"
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with _httpx_client(timeout=30) as client:
         resp = await client.get(
             "https://html.duckduckgo.com/html/",
             params=params,
@@ -213,7 +222,7 @@ async def arxiv_search(
         date_str = _since_yyyymmdd(since_days)
         search_query += f" AND submittedDate:[{date_str} TO 99999999]"
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with _httpx_client(timeout=30) as client:
         resp = await client.get(
             "https://export.arxiv.org/api/query",
             params={
@@ -288,7 +297,7 @@ async def youtube_search(
     if since_days is not None:
         params["publishedAfter"] = _since_date(since_days).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with _httpx_client(timeout=30) as client:
         resp = await client.get(
             "https://www.googleapis.com/youtube/v3/search",
             params=params,
@@ -336,7 +345,7 @@ async def github_search(
     if since_days is not None:
         q += f" created:>={_since_iso(since_days)}"
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with _httpx_client(timeout=30) as client:
         resp = await client.get(
             "https://api.github.com/search/repositories",
             params={"q": q, "sort": "stars", "per_page": 20},
@@ -406,7 +415,7 @@ async def bilibili_search(
         "Referer": "https://search.bilibili.com/",
     }
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with _httpx_client(timeout=30) as client:
         resp = await client.get(
             "https://api.bilibili.com/x/web-interface/search/type",
             params=params,
@@ -469,7 +478,7 @@ async def zhihu_search(
     results: list[dict] = []
 
     # Use Zhihu's search API endpoint
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    async with _httpx_client(timeout=30, follow_redirects=True) as client:
         # General search (mix of answers and articles)
         params = {
             "q": query,

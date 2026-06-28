@@ -128,20 +128,20 @@ class TestCheckUpdates:
 
 class TestSinceDaysHelpers:
     def test_since_iso(self):
-        from openlearning.skills.search import _since_iso
+        from openlearning.tools.search import _since_iso
         result = _since_iso(7)
         assert len(result) == 10  # YYYY-MM-DD
         assert result[4] == "-"
         assert result[7] == "-"
 
     def test_since_yyyymmdd(self):
-        from openlearning.skills.search import _since_yyyymmdd
+        from openlearning.tools.search import _since_yyyymmdd
         result = _since_yyyymmdd(30)
         assert len(result) == 8  # YYYYMMDD
         assert result.isdigit()
 
     def test_since_date_recent(self):
-        from openlearning.skills.search import _since_date
+        from openlearning.tools.search import _since_date
         from datetime import datetime, timezone
         dt = _since_date(1)
         now = datetime.now(timezone.utc)

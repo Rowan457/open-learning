@@ -12,7 +12,7 @@ import httpx
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from openlearning.config import get_config
+from openlearning.config import get_config, get_proxy
 
 
 # ── Input Schemas ────────────────────────────────────────────
@@ -43,11 +43,15 @@ async def fetch_page(url: str) -> dict[str, Any]:
     timeout = config.skills.fetch.timeout
 
     try:
-        async with httpx.AsyncClient(
-            timeout=timeout,
-            follow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; OpenLearning/1.0)"},
-        ) as client:
+        proxy = get_proxy()
+        client_kwargs: dict[str, Any] = {
+            "timeout": timeout,
+            "follow_redirects": True,
+            "headers": {"User-Agent": "Mozilla/5.0 (compatible; OpenLearning/1.0)"},
+        }
+        if proxy:
+            client_kwargs["proxy"] = proxy
+        async with httpx.AsyncClient(**client_kwargs) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             html = resp.text
@@ -179,7 +183,11 @@ async def parse_pdf(url: str) -> dict[str, Any]:
     返回 {url, content, page_count, success}。
     """
     try:
-        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+        proxy = get_proxy()
+        client_kwargs: dict[str, Any] = {"timeout": 60, "follow_redirects": True}
+        if proxy:
+            client_kwargs["proxy"] = proxy
+        async with httpx.AsyncClient(**client_kwargs) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             pdf_bytes = resp.content

@@ -1,26 +1,26 @@
 # Skill 注册表
 skills:
   search:
-    module: openlearning.skills.search
+    module: openlearning.tools.search
     tools: [web_search, arxiv_search, youtube_search, github_search]
 
   fetch:
-    module: openlearning.skills.fetch
+    module: openlearning.tools.fetch
     tools: [fetch_page, extract, parse_pdf]
 
   analyze:
-    module: openlearning.skills.analyze
+    module: openlearning.tools.analyze
     tools: [score, summarize, tag, extract_knowledge, discover_relations, compare]
     requires: [fetch]
 
   persist:
-    module: openlearning.skills.persist
+    module: openlearning.tools.persist
     tools: [save_resource, query_db, export]
 
   memory:
-    module: openlearning.skills.memory
+    module: openlearning.tools.memory
     tools: [get_mastery, update_mastery, get_preferences, record_event]
 
   render:
-    module: openlearning.skills.render
+    module: openlearning.tools.render
     tools: [build_learning_system, preview, deploy]

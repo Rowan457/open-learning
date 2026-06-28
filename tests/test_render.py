@@ -12,7 +12,7 @@ def _run(coro):
 
 class TestBuildLearningSystem:
     def test_generates_all_pages(self):
-        from openlearning.skills.render import build_learning_system
+        from openlearning.tools.render import build_learning_system
 
         graph = {
             "nodes": [
@@ -41,7 +41,7 @@ class TestBuildLearningSystem:
             assert Path(tmpdir, "data", "knowledge-graph.json").exists()
 
     def test_concept_page_has_rich_content(self):
-        from openlearning.skills.render import build_learning_system
+        from openlearning.tools.render import build_learning_system
 
         graph = {
             "nodes": [{"id": "x", "name": "Test Node", "type": "concept", "difficulty": "beginner",
@@ -61,7 +61,7 @@ class TestBuildLearningSystem:
             assert "Keep practicing" in content
 
     def test_empty_graph(self):
-        from openlearning.skills.render import build_learning_system
+        from openlearning.tools.render import build_learning_system
 
         with tempfile.TemporaryDirectory() as tmpdir:
             result = _run(build_learning_system.ainvoke({
