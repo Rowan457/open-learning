@@ -42,3 +42,6 @@ node_modules/
 PROJECT_SPECS.md
 docs/
 CHANGELOG.md
+.history/
+.claude/
+deep-research-agent-design.md
