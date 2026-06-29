@@ -142,31 +142,15 @@ async def _enrich_node(
     if existing_def and existing_def.startswith("Subtopic:"):
         existing_def = ""
 
-    prompt = f"""你是一位专业的知识整理助手。请为知识点 "{concept_name}" 生成丰富、有教育价值的内容。
+    from openlearning.agents.prompts import CONCEPT_ENRICH_PROMPT
 
-学习主题背景：{user_request or "通用学习"}
-概念类型：{concept_type}
-
-相关资源摘要：
-{resources_text}
-
-已有定义：{existing_def or "无"}
-
-请以 JSON 格式输出：
-{{
-  "definition": "清晰准确的概念定义（2-4句话，要有实质内容）",
-  "explanation": "深入浅出的解释（3-5段，帮助理解这个概念为什么重要、如何工作）",
-  "key_points": ["要点1", "要点2", "要点3", "要点4", "要点5"],
-  "examples": ["实际应用示例1", "实际应用示例2"],
-  "common_mistakes": ["常见误解1", "常见误解2"],
-  "learning_tips": "学习建议（1-2句话）"
-}}
-
-要求：
-- 内容要有实质价值，不要空泛的描述
-- 用中文回答
-- explanation 要有层次感，从简到难
-- examples 要具体、可操作"""
+    prompt = CONCEPT_ENRICH_PROMPT.format(
+        concept_name=concept_name,
+        user_request=user_request or "通用学习",
+        concept_type=concept_type,
+        resources_text=resources_text,
+        existing_def=existing_def or "无",
+    )
 
     try:
         result = await achat_json(

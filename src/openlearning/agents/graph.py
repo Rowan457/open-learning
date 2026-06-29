@@ -103,13 +103,9 @@ async def _extract_concepts_from_resources(
             title = resource.get("title", "")
             if len(content) < 30:
                 return {"concepts": [], "relations": []}
-            prompt = f"""从以下资源中提取知识点和它们之间的关系。
+            from openlearning.agents.prompts import RESOURCE_EXTRACT_PROMPT
 
-标题: {title}
-内容: {content[:3000]}
-
-以 JSON 格式输出:
-{{"concepts": [{{"name": "概念名", "definition": "一句话定义", "difficulty": "beginner/intermediate/advanced"}}], "relations": [{{"from": "概念A", "to": "概念B", "type": "prerequisite/related/extends"}}]}}"""
+            prompt = RESOURCE_EXTRACT_PROMPT.format(title=title, content=content[:3000])
             try:
                 result = await achat_json(
                     messages=[{"role": "user", "content": prompt}],

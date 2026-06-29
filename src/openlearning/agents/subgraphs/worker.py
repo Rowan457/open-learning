@@ -20,7 +20,7 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
-from openlearning.agents.prompts import COMPRESS_SYSTEM_PROMPT, WORKER_SYSTEM_PROMPT
+from openlearning.agents.prompts import COMPRESS_HUMAN_PROMPT, COMPRESS_SYSTEM_PROMPT, WORKER_SYSTEM_PROMPT
 from openlearning.agents.state import WorkerOutputState, WorkerState
 from openlearning.log import get_logger
 
@@ -152,7 +152,7 @@ async def _compress(state: WorkerState, config: RunnableConfig) -> dict:
 
     topic = state.get("topic", "")
     messages = list(state.get("worker_messages", []))
-    messages.append(HumanMessage(content="请清理上述发现，保留所有相关信息但去除重复。按主题组织输出。"))
+    messages.append(HumanMessage(content=COMPRESS_HUMAN_PROMPT))
 
     # token 超限重试（最多 3 次）
     for attempt in range(3):
